@@ -11,6 +11,9 @@ namespace Assets.EvoCellSim.Core
         public int DeathDamageThreshold { get; } = 10;
         public int RepairPower { get; } = 3;
         public int MaxEnergy { get; } = 20;
+        public float BondDecayPerTick { get; } = 0.1f;
+        public float BondBreakThreshold { get; } = 0.05f;
+        public int BondTransferAmount { get; } = 1;
 
         public SimulationSettings(ulong seed, int ticksPerSecond = 60)
         {

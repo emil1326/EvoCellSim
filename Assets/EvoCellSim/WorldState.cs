@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace Assets.EvoCellSim.Core
 {
     public sealed class WorldState
@@ -85,6 +87,54 @@ namespace Assets.EvoCellSim.Core
         public void AddIntent(IntentRecord intent)
         {
             Intents.Add(intent);
+        }
+
+        public int AddBond(in BondRecord bond)
+        {
+            return Bonds.Add(bond);
+        }
+
+        public bool TryCreateBond(int cellAId, int cellBId, float strength, out int bondId)
+        {
+            bondId = 0;
+
+            if (cellAId == cellBId)
+            {
+                return false;
+            }
+
+            if (!TryGetCell(cellAId, out var cellA) || !TryGetCell(cellBId, out var cellB))
+            {
+                return false;
+            }
+
+            if (!cellA.Alive || !cellB.Alive)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < Bonds.Count; i++)
+            {
+                var existingBond = Bonds.Get(i);
+                var sameDirection = existingBond.CellAId == cellAId && existingBond.CellBId == cellBId;
+                var oppositeDirection = existingBond.CellAId == cellBId && existingBond.CellBId == cellAId;
+                if (sameDirection || oppositeDirection)
+                {
+                    return false;
+                }
+            }
+
+            var bond = new BondRecord
+            {
+                Id = Bonds.Count + 1,
+                CellAId = cellAId,
+                CellBId = cellBId,
+                Strength = strength
+            };
+
+            AddBond(in bond);
+            bondId = bond.Id;
+            return true;
         }
 
         public void PassiveUpkeep()
@@ -206,6 +256,201 @@ namespace Assets.EvoCellSim.Core
                 }
 
                 UpdateCell(in updated);
+            }
+        }
+
+        public void UpdateBondsAndClusters()
+        {
+            var keptBonds = new List<BondRecord>(Bonds.Count);
+            var adjacency = new Dictionary<int, List<int>>();
+            var previousClusterByCellId = new Dictionary<int, int>();
+            var previousClusterSizes = new Dictionary<int, int>();
+            var startingEnergyByCellId = new Dictionary<int, int>();
+            var pendingEnergyDeltaByCellId = new Dictionary<int, int>();
+            var reservedOutgoingByCellId = new Dictionary<int, int>();
+
+            for (var i = 0; i < Cells.Count; i++)
+            {
+                var cell = Cells.Get(i);
+                if (cell.Alive)
+                {
+                    adjacency[cell.Id] = new List<int>();
+                    previousClusterByCellId[cell.Id] = cell.ClusterId;
+                    startingEnergyByCellId[cell.Id] = cell.Energy;
+                    pendingEnergyDeltaByCellId[cell.Id] = 0;
+                    reservedOutgoingByCellId[cell.Id] = 0;
+                    if (!previousClusterSizes.ContainsKey(cell.ClusterId))
+                    {
+                        previousClusterSizes[cell.ClusterId] = 0;
+                    }
+
+                    previousClusterSizes[cell.ClusterId]++;
+                }
+                else
+                {
+                    var deadCell = cell;
+                    deadCell.ClusterId = 0;
+                    UpdateCell(in deadCell);
+                }
+            }
+
+            for (var i = 0; i < Bonds.Count; i++)
+            {
+                var bond = Bonds.Get(i);
+                if (!CellExists(bond.CellAId) || !CellExists(bond.CellBId))
+                {
+                    continue;
+                }
+
+                var cellA = GetCellById(bond.CellAId);
+                var cellB = GetCellById(bond.CellBId);
+                if (!cellA.Alive || !cellB.Alive)
+                {
+                    continue;
+                }
+
+                var strength = bond.Strength - Settings.BondDecayPerTick;
+                if (strength <= Settings.BondBreakThreshold)
+                {
+                    continue;
+                }
+
+                var startingEnergyA = startingEnergyByCellId[bond.CellAId];
+                var startingEnergyB = startingEnergyByCellId[bond.CellBId];
+                var energyDelta = startingEnergyA - startingEnergyB;
+                if (Settings.BondTransferAmount > 0 && energyDelta != 0)
+                {
+                    var sourceCellId = energyDelta > 0 ? bond.CellAId : bond.CellBId;
+                    var targetCellId = energyDelta > 0 ? bond.CellBId : bond.CellAId;
+                    var transferAmount = Settings.BondTransferAmount;
+                    var sourceStartingEnergy = energyDelta > 0 ? startingEnergyA : startingEnergyB;
+                    var reservedOutgoing = reservedOutgoingByCellId[sourceCellId];
+                    if (sourceStartingEnergy - reservedOutgoing >= transferAmount)
+                    {
+                        reservedOutgoingByCellId[sourceCellId] = reservedOutgoing + transferAmount;
+                        pendingEnergyDeltaByCellId[sourceCellId] -= transferAmount;
+                        pendingEnergyDeltaByCellId[targetCellId] += transferAmount;
+                    }
+                }
+
+                bond.Strength = strength;
+                keptBonds.Add(bond);
+
+                adjacency[bond.CellAId].Add(bond.CellBId);
+                adjacency[bond.CellBId].Add(bond.CellAId);
+            }
+
+            Bonds.Clear();
+            for (var i = 0; i < keptBonds.Count; i++)
+            {
+                Bonds.Add(keptBonds[i]);
+            }
+
+            for (var i = 0; i < Cells.Count; i++)
+            {
+                var cell = Cells.Get(i);
+                if (!cell.Alive)
+                {
+                    continue;
+                }
+
+                var netDelta = pendingEnergyDeltaByCellId[cell.Id];
+                if (netDelta == 0)
+                {
+                    continue;
+                }
+
+                var updatedCell = cell;
+                updatedCell.Energy += netDelta;
+                UpdateCell(in updatedCell);
+            }
+
+            Clusters.Clear();
+            var visited = new HashSet<int>();
+            var processedOldClusters = new HashSet<int>();
+
+            for (var i = 0; i < Cells.Count; i++)
+            {
+                var cell = Cells.Get(i);
+                if (!cell.Alive || visited.Contains(cell.Id))
+                {
+                    continue;
+                }
+
+                var component = new List<int>();
+                var queue = new Queue<int>();
+                queue.Enqueue(cell.Id);
+                visited.Add(cell.Id);
+
+                while (queue.Count > 0)
+                {
+                    var currentCellId = queue.Dequeue();
+                    component.Add(currentCellId);
+
+                    if (!adjacency.TryGetValue(currentCellId, out var neighbors))
+                    {
+                        continue;
+                    }
+
+                    for (var neighborIndex = 0; neighborIndex < neighbors.Count; neighborIndex++)
+                    {
+                        var neighborId = neighbors[neighborIndex];
+                        if (visited.Contains(neighborId))
+                        {
+                            continue;
+                        }
+
+                        visited.Add(neighborId);
+                        queue.Enqueue(neighborId);
+                    }
+                }
+
+                var rootCellId = component[0];
+                var rootCellIndex = -1;
+                var oldClusterId = previousClusterByCellId[rootCellId];
+                var clusterSplit = oldClusterId != 0
+                    && previousClusterSizes.TryGetValue(oldClusterId, out var previousSize)
+                    && previousSize > component.Count;
+                var applyCascadeDamage = clusterSplit && processedOldClusters.Contains(oldClusterId);
+
+                if (oldClusterId != 0)
+                {
+                    processedOldClusters.Add(oldClusterId);
+                }
+
+                if (applyCascadeDamage)
+                {
+                    for (var componentIndex = 0; componentIndex < component.Count; componentIndex++)
+                    {
+                        var fracturedCell = GetCellById(component[componentIndex]);
+                        fracturedCell.Damage += 1;
+                        fracturedCell.Energy = fracturedCell.Energy > 0 ? fracturedCell.Energy - 1 : 0;
+                        UpdateCell(in fracturedCell);
+                    }
+                }
+
+                for (var cellIndex = 0; cellIndex < Cells.Count; cellIndex++)
+                {
+                    if (Cells.Get(cellIndex).Id == rootCellId)
+                    {
+                        rootCellIndex = cellIndex;
+                        break;
+                    }
+                }
+
+                for (var componentIndex = 0; componentIndex < component.Count; componentIndex++)
+                {
+                    var member = GetCellById(component[componentIndex]);
+                    member.ClusterId = rootCellId;
+                    UpdateCell(in member);
+                }
+
+                Clusters.Add(new ClusterRecord
+                {
+                    Id = rootCellId,
+                    FirstCellIndex = rootCellIndex,
+                    CellCount = component.Count
+                });
             }
         }
 

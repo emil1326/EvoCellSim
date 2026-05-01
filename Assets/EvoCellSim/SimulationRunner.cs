@@ -73,6 +73,7 @@ namespace Assets.EvoCellSim.Core
 
         private void UpdateBondsAndClusters()
         {
+            World.UpdateBondsAndClusters();
         }
 
         private void ResolveReproductionDeathMutation()

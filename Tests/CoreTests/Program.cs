@@ -26,6 +26,11 @@ static class Program
         RunTest("Passive upkeep drains energy and applies overpressure damage", TestPassiveUpkeepEnergyAndPressure);
         RunTest("Repair intent queues and resolves from damaged repair cells", TestRepairIntentQueuesAndResolves);
         RunTest("Damage above threshold kills cells during survival update", TestDamageCausesDeath);
+        RunTest("Bond updates split clusters and decay bonds", TestBondDecaySplitsClusters);
+        RunTest("Bond updates transfer energy across connected cells", TestBondTransfersEnergy);
+        RunTest("Bond transfer is simultaneous, not sequential", TestBondTransferIsSimultaneous);
+        RunTest("Bond creation accepts valid cell pairs and strong bonds persist", TestBondCreationAndPersistence);
+        RunTest("Cascade failure damages fragmented clusters", TestCascadeFailureDamagesFragment);
 
         Console.WriteLine(failures == 0
             ? "[CoreTests] ALL TESTS PASSED"
@@ -366,6 +371,95 @@ static class Program
         world.ApplyDeathAndRepair();
         AssertEqual(false, world.GetCellById(30).Alive, "Cells with damage above the threshold should die");
         AssertEqual(0, world.GetCellById(30).Energy, "Dead cells should have their energy drained to zero");
+    }
+
+    private static void TestBondDecaySplitsClusters()
+    {
+        var world = new WorldState(new SimulationSettings(15UL));
+
+        world.AddCell(new CellRecord { Id = 1, Alive = true, GenomeId = 1, ClusterId = 0, Energy = 5, MaxEnergy = 10 });
+        world.AddCell(new CellRecord { Id = 2, Alive = true, GenomeId = 1, ClusterId = 0, Energy = 5, MaxEnergy = 10 });
+        world.AddCell(new CellRecord { Id = 3, Alive = true, GenomeId = 1, ClusterId = 0, Energy = 5, MaxEnergy = 10 });
+        world.AddBond(new BondRecord { Id = 1, CellAId = 1, CellBId = 2, Strength = 0.08f });
+        world.AddBond(new BondRecord { Id = 2, CellAId = 2, CellBId = 3, Strength = 0.08f });
+
+        world.UpdateBondsAndClusters();
+
+        AssertEqual(0, world.Bonds.Count, "Weak bonds should decay below the break threshold");
+        AssertEqual(3, world.Clusters.Count, "Each isolated cell should become its own cluster");
+        AssertEqual(1, world.GetCellById(1).ClusterId, "First cell should become its own cluster");
+        AssertEqual(2, world.GetCellById(2).ClusterId, "Second cell should become its own cluster");
+        AssertEqual(3, world.GetCellById(3).ClusterId, "Third cell should become its own cluster");
+    }
+
+    private static void TestBondTransfersEnergy()
+    {
+        var world = new WorldState(new SimulationSettings(16UL));
+        world.AddCell(new CellRecord { Id = 10, Alive = true, GenomeId = 1, ClusterId = 0, Energy = 8, MaxEnergy = 10 });
+        world.AddCell(new CellRecord { Id = 11, Alive = true, GenomeId = 1, ClusterId = 0, Energy = 2, MaxEnergy = 10 });
+        world.AddBond(new BondRecord { Id = 1, CellAId = 10, CellBId = 11, Strength = 1.0f });
+
+        world.UpdateBondsAndClusters();
+
+        AssertEqual(7, world.GetCellById(10).Energy, "Bond update should transfer energy from the higher-energy cell");
+        AssertEqual(3, world.GetCellById(11).Energy, "Bond update should transfer energy to the lower-energy cell");
+        AssertEqual(1, world.Clusters.Count, "Connected cells should remain in one cluster");
+        AssertEqual(10, world.GetCellById(10).ClusterId, "Cluster ID should be derived from the component root cell");
+        AssertEqual(10, world.GetCellById(11).ClusterId, "Connected cells should share the same cluster ID");
+    }
+
+    private static void TestBondTransferIsSimultaneous()
+    {
+        var world = new WorldState(new SimulationSettings(19UL));
+        world.AddCell(new CellRecord { Id = 41, Alive = true, GenomeId = 1, ClusterId = 0, Energy = 2, MaxEnergy = 10 });
+        world.AddCell(new CellRecord { Id = 42, Alive = true, GenomeId = 1, ClusterId = 0, Energy = 0, MaxEnergy = 10 });
+        world.AddCell(new CellRecord { Id = 43, Alive = true, GenomeId = 1, ClusterId = 0, Energy = 0, MaxEnergy = 10 });
+        world.AddBond(new BondRecord { Id = 1, CellAId = 41, CellBId = 42, Strength = 1.0f });
+        world.AddBond(new BondRecord { Id = 2, CellAId = 42, CellBId = 43, Strength = 1.0f });
+
+        world.UpdateBondsAndClusters();
+
+        AssertEqual(1, world.GetCellById(41).Energy, "Source cell should lose one energy from the first bond");
+        AssertEqual(1, world.GetCellById(42).Energy, "Middle cell should only receive the first bond transfer in the same tick");
+        AssertEqual(0, world.GetCellById(43).Energy, "Simultaneous transfer should prevent chain forwarding within the same tick");
+    }
+
+    private static void TestBondCreationAndPersistence()
+    {
+        var world = new WorldState(new SimulationSettings(17UL));
+        world.AddCell(new CellRecord { Id = 21, Alive = true, GenomeId = 1, ClusterId = 0, Energy = 4, MaxEnergy = 10 });
+        world.AddCell(new CellRecord { Id = 22, Alive = true, GenomeId = 1, ClusterId = 0, Energy = 4, MaxEnergy = 10 });
+
+        var created = world.TryCreateBond(21, 22, 1.0f, out var bondId);
+        AssertEqual(true, created, "Valid cell pairs should create bonds deterministically");
+        AssertEqual(1, bondId, "First created bond should receive a stable ID");
+
+        world.UpdateBondsAndClusters();
+        world.UpdateBondsAndClusters();
+
+        AssertEqual(1, world.Bonds.Count, "Strong bonds should persist across multiple updates");
+        AssertEqual(1, world.Clusters.Count, "Persisting bonds should keep cells in one cluster");
+        AssertEqual(21, world.GetCellById(21).ClusterId, "Cluster ID should remain anchored to the root cell");
+        AssertEqual(21, world.GetCellById(22).ClusterId, "Both cells should remain in the same cluster");
+    }
+
+    private static void TestCascadeFailureDamagesFragment()
+    {
+        var world = new WorldState(new SimulationSettings(18UL));
+        world.AddCell(new CellRecord { Id = 31, Alive = true, GenomeId = 1, ClusterId = 1, Energy = 5, MaxEnergy = 10, Damage = 0 });
+        world.AddCell(new CellRecord { Id = 32, Alive = true, GenomeId = 1, ClusterId = 1, Energy = 5, MaxEnergy = 10, Damage = 0 });
+        world.AddCell(new CellRecord { Id = 33, Alive = true, GenomeId = 1, ClusterId = 1, Energy = 5, MaxEnergy = 10, Damage = 0 });
+        world.AddBond(new BondRecord { Id = 1, CellAId = 31, CellBId = 32, Strength = 1.0f });
+        world.AddBond(new BondRecord { Id = 2, CellAId = 32, CellBId = 33, Strength = 0.08f });
+
+        world.UpdateBondsAndClusters();
+
+        AssertEqual(1, world.Bonds.Count, "The strong bond should survive while the weak bond breaks");
+        AssertEqual(2, world.Clusters.Count, "The broken chain should split into two clusters");
+        AssertEqual(0, world.GetCellById(31).Damage, "Primary fragment should not take cascade damage");
+        AssertEqual(0, world.GetCellById(32).Damage, "Primary fragment should not take cascade damage");
+        AssertEqual(1, world.GetCellById(33).Damage, "Detached fragment should take cascade damage deterministically");
+        AssertEqual(4, world.GetCellById(33).Energy, "Detached fragment should lose one energy during cascade failure");
     }
 
     private static void AssertEqual<T>(T expected, T actual, string message)
