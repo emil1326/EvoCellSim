@@ -26,6 +26,7 @@ namespace Assets.EvoCellSim.Core
     {
         public int Id { get; set; }
         public int OwnerCellId { get; set; }
+        public int ModuleTypeId { get; set; }
         public bool Active { get; set; }
     }
 
@@ -58,11 +59,18 @@ namespace Assets.EvoCellSim.Core
         public float Intensity { get; set; }
     }
 
+    public enum IntentKind
+    {
+        Move = 1,
+        Mutation = 2,
+        Wait = 3
+    }
+
     public struct IntentRecord : IIdentifiable
     {
         public int Id { get; set; }
         public int SourceCellId { get; set; }
         public int TargetCellId { get; set; }
-        public int Kind { get; set; }
+        public IntentKind Kind { get; set; }
     }
 }

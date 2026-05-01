@@ -9,6 +9,7 @@ namespace Assets.EvoCellSim.Core
         Operand,
         Modifier,
         Control,
+        Condition,
         Junk
     }
 
@@ -25,6 +26,7 @@ namespace Assets.EvoCellSim.Core
         public int OpcodeId { get; init; }
         public int[] OperandTokenIds { get; init; }
         public int[] ModifierTokenIds { get; init; }
+        public int[] ConditionTokenIds { get; init; }
         public int ControlTokenId { get; init; }
         public int StartTokenIndex { get; init; }
         public int EndTokenIndex { get; init; }
@@ -105,6 +107,7 @@ namespace Assets.EvoCellSim.Core
                 }
 
                 var modifiers = new List<int>();
+                var conditions = new List<int>();
                 var operands = new List<int>();
                 var controlTokenId = 0;
                 var j = i + 1;
@@ -121,6 +124,12 @@ namespace Assets.EvoCellSim.Core
                         invalidModifiers = true;
                     }
 
+                    j++;
+                }
+
+                while (j < decodedTokens.Count && decodedTokens[j].Type == TokenType.Condition)
+                {
+                    conditions.Add(decodedTokens[j].TokenId);
                     j++;
                 }
 
@@ -155,6 +164,7 @@ namespace Assets.EvoCellSim.Core
                     OpcodeId = token.TokenId,
                     OperandTokenIds = operands.ToArray(),
                     ModifierTokenIds = modifiers.ToArray(),
+                    ConditionTokenIds = conditions.ToArray(),
                     ControlTokenId = controlTokenId,
                     StartTokenIndex = i,
                     EndTokenIndex = j,

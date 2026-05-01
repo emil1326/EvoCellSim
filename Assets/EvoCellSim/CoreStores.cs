@@ -9,6 +9,7 @@ namespace Assets.EvoCellSim.Core
         private readonly Dictionary<int, int> indexById = new Dictionary<int, int>();
 
         public int Count => records.Count;
+        public IReadOnlyList<T> Records => records;
 
         public int Add(in T record)
         {

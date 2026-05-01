@@ -18,6 +18,11 @@ static class Program
         RunTest("Cell lookup by ID works in world stores", TestCellLookupById);
         RunTest("Genome decoder decodes instruction genome deterministically", TestGenomeDecodePipeline);
         RunTest("Opcode modifier policy rejects unexpected modifiers", TestOpcodeModifierPolicy);
+        RunTest("Valid decoded rule queues a move intent", TestDispatchQueuesMoveIntent);
+        RunTest("Condition token validation works for move rules", TestDispatchWithConditionToken);
+        RunTest("Mutation operator hook is invoked for mutate opcode", TestDispatchMutationOperatorHook);
+        RunTest("Failure effect queues a wait intent on move failure", TestFailureEffectQueuesWaitIntent);
+        RunTest("Invalid module or target combo fails canonically", TestDispatchInvalidModuleOrTargetFails);
 
         Console.WriteLine(failures == 0
             ? "[CoreTests] ALL TESTS PASSED"
@@ -155,7 +160,7 @@ static class Program
             ParentId = 0,
             SpeciesGenome = Array.Empty<byte>(),
             ModuleGenome = Array.Empty<byte>(),
-            InstructionGenome = new byte[] { 0x10, 0x20, 0x21, 0xFF }
+            InstructionGenome = new byte[] { 0x10, 0x20, 0xFF }
         };
 
         world.AddGenome(in genome);
@@ -165,7 +170,7 @@ static class Program
         AssertEqual(1, resultA.Instructions.Count, "Expected one decoded instruction chain");
         AssertEqual(true, resultA.Instructions[0].IsValid, "Expected the decoded instruction to be valid");
         AssertEqual(1, resultA.Instructions[0].OpcodeId, "Opcode ID should match the registered opcode");
-        AssertEqual(2, resultA.Instructions[0].OperandTokenIds.Length, "Expected two required operands");
+        AssertEqual(1, resultA.Instructions[0].OperandTokenIds.Length, "Expected one required operand");
         AssertEqual(6, resultA.Instructions[0].ControlTokenId, "Expected the trailing control token ID");
         AssertEqual(resultA.Instructions.Count, resultB.Instructions.Count, "Decoding the same genome twice should be deterministic");
     }
@@ -188,6 +193,134 @@ static class Program
         AssertEqual(1, result.Instructions.Count, "Expected one decoded instruction chain");
         AssertEqual(false, result.Instructions[0].IsValid, "Modifier tokens should invalidate this opcode");
         AssertEqual("Modifier tokens are not allowed for this opcode", result.Instructions[0].FailureReason!, "Failure reason should explain modifier policy");
+    }
+
+    private static void TestDispatchQueuesMoveIntent()
+    {
+        var world = new WorldState(new SimulationSettings(7UL));
+        world.AddCell(new CellRecord { Id = 1, Alive = true, GenomeId = 1, ClusterId = 0 });
+        world.AddCell(new CellRecord { Id = 3, Alive = true, GenomeId = 0, ClusterId = 0 });
+        world.AddModule(new ModuleRecord { Id = 1, OwnerCellId = 1, ModuleTypeId = 1, Active = true });
+
+        var genome = new GenomeRecord
+        {
+            Id = 1,
+            ParentId = 0,
+            SpeciesGenome = Array.Empty<byte>(),
+            ModuleGenome = Array.Empty<byte>(),
+            InstructionGenome = new byte[] { 0x10, 0x20, 0xFF }
+        };
+
+        world.AddGenome(in genome);
+        var dispatchResult = world.QueueIntentsFromGenome(1, 1);
+
+        AssertEqual(true, dispatchResult.Success, "Valid move rule should dispatch successfully");
+        AssertEqual(1, dispatchResult.QueuedIntents, "One intent should be queued");
+        AssertEqual(1, world.Intents.Count, "Intent queue should contain one intent");
+        var intent = world.Intents.Get(0);
+        AssertEqual(1, intent.SourceCellId, "Intent source cell should match");
+        AssertEqual(3, intent.TargetCellId, "Intent target cell should match operand token ID");
+        AssertEqual(IntentKind.Move, intent.Kind, "Intent kind should reflect the move opcode");
+
+        var resolved = world.ResolveQueuedIntents();
+        AssertEqual(1, resolved, "One queued intent should be resolved");
+        AssertEqual(0, world.Intents.Count, "Intent queue should clear after resolution");
+        AssertEqual(3, world.GetCellById(1).ClusterId, "Resolver should apply move intent result to the source cell state");
+    }
+
+    private static void TestDispatchMutationOperatorHook()
+    {
+        var world = new WorldState(new SimulationSettings(9UL));
+        world.AddCell(new CellRecord { Id = 1, Alive = true, GenomeId = 1, ClusterId = 0 });
+        world.AddModule(new ModuleRecord { Id = 2, OwnerCellId = 1, ModuleTypeId = 2, Active = true });
+
+        var genome = new GenomeRecord
+        {
+            Id = 1,
+            ParentId = 0,
+            SpeciesGenome = Array.Empty<byte>(),
+            ModuleGenome = Array.Empty<byte>(),
+            InstructionGenome = new byte[] { 0x12, 0xFF }
+        };
+
+        world.AddGenome(in genome);
+        var dispatchResult = world.QueueIntentsFromGenome(1, 1);
+
+        AssertEqual(true, dispatchResult.Success, "Mutation hook dispatch should succeed for an allowed mutate opcode");
+        AssertEqual(1, dispatchResult.QueuedIntents, "One mutation intent should be queued by the hook");
+        AssertEqual(1, world.Intents.Count, "Mutation intent should be queued in the world");
+        AssertEqual<IntentKind>(IntentKind.Mutation, world.Intents.Get(0).Kind, "Mutation intent should have the expected kind");
+    }
+
+    private static void TestDispatchWithConditionToken()
+    {
+        var world = new WorldState(new SimulationSettings(10UL));
+        world.AddCell(new CellRecord { Id = 1, Alive = true, GenomeId = 1, ClusterId = 0 });
+        world.AddCell(new CellRecord { Id = 3, Alive = true, GenomeId = 0, ClusterId = 0 });
+        world.AddModule(new ModuleRecord { Id = 1, OwnerCellId = 1, ModuleTypeId = 1, Active = true });
+
+        var genome = new GenomeRecord
+        {
+            Id = 1,
+            ParentId = 0,
+            SpeciesGenome = Array.Empty<byte>(),
+            ModuleGenome = Array.Empty<byte>(),
+            InstructionGenome = new byte[] { 0x10, 0x40, 0x20, 0xFF }
+        };
+
+        world.AddGenome(in genome);
+        var dispatchResult = world.QueueIntentsFromGenome(1, 1);
+
+        AssertEqual(true, dispatchResult.Success, "Move rule with explicit condition should succeed");
+        AssertEqual(1, dispatchResult.QueuedIntents, "One intent should be queued when move condition passes");
+        AssertEqual(1, world.Intents.Count, "Intent queue should contain the move intent");
+    }
+
+    private static void TestFailureEffectQueuesWaitIntent()
+    {
+        var world = new WorldState(new SimulationSettings(11UL));
+        world.AddCell(new CellRecord { Id = 1, Alive = true, GenomeId = 1, ClusterId = 0 });
+        world.AddModule(new ModuleRecord { Id = 1, OwnerCellId = 1, ModuleTypeId = 1, Active = true });
+
+        var genome = new GenomeRecord
+        {
+            Id = 1,
+            ParentId = 0,
+            SpeciesGenome = Array.Empty<byte>(),
+            ModuleGenome = Array.Empty<byte>(),
+            InstructionGenome = new byte[] { 0x10, 0x20, 0xFF }
+        };
+
+        world.AddGenome(in genome);
+        var dispatchResult = world.QueueIntentsFromGenome(1, 1);
+
+        AssertEqual(false, dispatchResult.Success, "Dispatch should fail when target is invalid");
+        AssertEqual(1, dispatchResult.QueuedIntents, "Failure effect should queue a wait intent on move failure");
+        AssertEqual(1, world.Intents.Count, "Wait intent should be queued in the world");
+        AssertEqual<IntentKind>(IntentKind.Wait, world.Intents.Get(0).Kind, "Failure effect should create a wait intent");
+    }
+
+    private static void TestDispatchInvalidModuleOrTargetFails()
+    {
+        var world = new WorldState(new SimulationSettings(8UL));
+        world.AddCell(new CellRecord { Id = 1, Alive = true, GenomeId = 1, ClusterId = 0 });
+
+        var genome = new GenomeRecord
+        {
+            Id = 1,
+            ParentId = 0,
+            SpeciesGenome = Array.Empty<byte>(),
+            ModuleGenome = Array.Empty<byte>(),
+            InstructionGenome = new byte[] { 0x10, 0x20, 0xFF }
+        };
+
+        world.AddGenome(in genome);
+        var dispatchResult = world.QueueIntentsFromGenome(1, 1);
+
+        AssertEqual(false, dispatchResult.Success, "Dispatch should fail with no active module or invalid target");
+        AssertEqual(0, dispatchResult.QueuedIntents, "No intent should be queued when module/target combo is invalid");
+        AssertEqual(0, world.Intents.Count, "Intent queue should remain empty on failure");
+        AssertEqual(true, dispatchResult.FailureReasons.Count > 0, "Failure reasons should be reported canonically");
     }
 
     private static void AssertEqual<T>(T expected, T actual, string message)

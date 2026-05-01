@@ -67,6 +67,11 @@ namespace Assets.EvoCellSim.Core
             return Genomes.TryGetById(id, out genome);
         }
 
+        public void UpdateGenome(in GenomeRecord genome)
+        {
+            Genomes.SetById(genome.Id, genome);
+        }
+
         public int AddModule(in ModuleRecord module)
         {
             return Modules.Add(module);
@@ -75,6 +80,35 @@ namespace Assets.EvoCellSim.Core
         public bool TryGetModule(int id, out ModuleRecord module)
         {
             return Modules.TryGetById(id, out module);
+        }
+
+        public void AddIntent(IntentRecord intent)
+        {
+            Intents.Add(intent);
+        }
+
+        public BehaviorDispatchResult QueueIntentsFromGenome(int cellId, int genomeId)
+        {
+            return BehaviorDispatcher.QueueIntentsFromGenome(this, cellId, genomeId);
+        }
+
+        public BehaviorDispatchResult QueueIntentsForAllCells()
+        {
+            var aggregate = new BehaviorDispatchResult();
+
+            foreach (var cell in Cells.Records)
+            {
+                var result = BehaviorDispatcher.QueueIntentsFromGenome(this, cell.Id, cell.GenomeId);
+                aggregate.QueuedIntents += result.QueuedIntents;
+                aggregate.FailureReasons.AddRange(result.FailureReasons);
+            }
+
+            return aggregate;
+        }
+
+        public int ResolveQueuedIntents()
+        {
+            return BehaviorDispatcher.ResolveQueuedIntents(this);
         }
 
         public GenomeDecodeResult DecodeInstructionGenome(int genomeId)

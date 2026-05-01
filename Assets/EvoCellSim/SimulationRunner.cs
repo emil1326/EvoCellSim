@@ -57,10 +57,12 @@ namespace Assets.EvoCellSim.Core
 
         private void QueueIntents()
         {
+            World.QueueIntentsForAllCells();
         }
 
         private void ResolveIntents()
         {
+            World.ResolveQueuedIntents();
         }
 
         private void ApplyPhysics()
