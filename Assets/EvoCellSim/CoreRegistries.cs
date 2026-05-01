@@ -39,6 +39,7 @@ namespace Assets.EvoCellSim.Core
 
             Modules.Register(new ModuleDefinition(1, "Movement", new HashSet<int> { 1 }));
             Modules.Register(new ModuleDefinition(2, "Mutation", new HashSet<int> { 8 }));
+            Modules.Register(new ModuleDefinition(3, "Repair", new HashSet<int>()));
             Effects.Register(1, MoveEffect);
             Effects.Register(2, WaitEffect);
             Effects.Register(8, MutateEffect);

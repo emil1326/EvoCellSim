@@ -191,6 +191,19 @@ namespace Assets.EvoCellSim.Core
                             resolvedCount++;
                         }
                         break;
+                    case IntentKind.Repair:
+                        if (world.TryGetCell(intent.SourceCellId, out var repairCell) && repairCell.Energy >= world.Settings.RepairEnergyCost)
+                        {
+                            repairCell.Damage -= world.Settings.RepairPower;
+                            repairCell.Energy -= world.Settings.RepairEnergyCost;
+                            if (repairCell.Damage < 0)
+                            {
+                                repairCell.Damage = 0;
+                            }
+                            world.UpdateCell(in repairCell);
+                            resolvedCount++;
+                        }
+                        break;
                     default:
                         resolvedCount++;
                         break;

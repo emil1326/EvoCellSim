@@ -23,6 +23,9 @@ static class Program
         RunTest("Mutation operator hook is invoked for mutate opcode", TestDispatchMutationOperatorHook);
         RunTest("Failure effect queues a wait intent on move failure", TestFailureEffectQueuesWaitIntent);
         RunTest("Invalid module or target combo fails canonically", TestDispatchInvalidModuleOrTargetFails);
+        RunTest("Passive upkeep drains energy and applies overpressure damage", TestPassiveUpkeepEnergyAndPressure);
+        RunTest("Repair intent queues and resolves from damaged repair cells", TestRepairIntentQueuesAndResolves);
+        RunTest("Damage above threshold kills cells during survival update", TestDamageCausesDeath);
 
         Console.WriteLine(failures == 0
             ? "[CoreTests] ALL TESTS PASSED"
@@ -321,6 +324,48 @@ static class Program
         AssertEqual(0, dispatchResult.QueuedIntents, "No intent should be queued when module/target combo is invalid");
         AssertEqual(0, world.Intents.Count, "Intent queue should remain empty on failure");
         AssertEqual(true, dispatchResult.FailureReasons.Count > 0, "Failure reasons should be reported canonically");
+    }
+
+    private static void TestPassiveUpkeepEnergyAndPressure()
+    {
+        var world = new WorldState(new SimulationSettings(12UL));
+        world.AddCell(new CellRecord { Id = 10, Alive = true, GenomeId = 1, ClusterId = 0, Energy = 3, MaxEnergy = 10, Damage = 0 });
+        world.AddCell(new CellRecord { Id = 11, Alive = true, GenomeId = 1, ClusterId = 0, Energy = 3, MaxEnergy = 10, Damage = 0 });
+
+        world.PassiveUpkeep();
+
+        var cell = world.GetCellById(10);
+        AssertEqual(2, cell.Energy, "Passive upkeep should drain the configured energy cost");
+        AssertEqual(true, cell.Pressure > 0, "Pressure should be calculated for cells in a cluster");
+        AssertEqual(true, cell.Damage >= 0, "Damage should remain non-negative after upkeep");
+    }
+
+    private static void TestRepairIntentQueuesAndResolves()
+    {
+        var world = new WorldState(new SimulationSettings(13UL));
+        world.AddCell(new CellRecord { Id = 20, Alive = true, GenomeId = 1, ClusterId = 0, Energy = 5, MaxEnergy = 10, Damage = 5 });
+        world.AddModule(new ModuleRecord { Id = 5, OwnerCellId = 20, ModuleTypeId = 3, Active = true });
+
+        world.QueueRepairIntents();
+        AssertEqual(1, world.Intents.Count, "Repair intent should be queued for a damaged repair cell");
+        AssertEqual(IntentKind.Repair, world.Intents.Get(0).Kind, "Queued intent kind should be Repair");
+
+        var resolved = world.ResolveQueuedIntents();
+        AssertEqual(1, resolved, "One repair intent should resolve");
+
+        var repaired = world.GetCellById(20);
+        AssertEqual(true, repaired.Damage < 5, "Repair should reduce cell damage");
+        AssertEqual(true, repaired.Energy < 5, "Repair should consume repair energy cost");
+    }
+
+    private static void TestDamageCausesDeath()
+    {
+        var world = new WorldState(new SimulationSettings(14UL));
+        world.AddCell(new CellRecord { Id = 30, Alive = true, GenomeId = 1, ClusterId = 0, Energy = 1, MaxEnergy = 10, Damage = 12 });
+
+        world.ApplyDeathAndRepair();
+        AssertEqual(false, world.GetCellById(30).Alive, "Cells with damage above the threshold should die");
+        AssertEqual(0, world.GetCellById(30).Energy, "Dead cells should have their energy drained to zero");
     }
 
     private static void AssertEqual<T>(T expected, T actual, string message)

@@ -41,6 +41,7 @@ namespace Assets.EvoCellSim.Core
 
         private void PassiveUpkeep()
         {
+            World.PassiveUpkeep();
         }
 
         private void SampleLocalContext()
@@ -58,6 +59,7 @@ namespace Assets.EvoCellSim.Core
         private void QueueIntents()
         {
             World.QueueIntentsForAllCells();
+            World.QueueRepairIntents();
         }
 
         private void ResolveIntents()
@@ -75,6 +77,7 @@ namespace Assets.EvoCellSim.Core
 
         private void ResolveReproductionDeathMutation()
         {
+            World.ApplyDeathAndRepair();
         }
 
         private void UpdateEnvironment()

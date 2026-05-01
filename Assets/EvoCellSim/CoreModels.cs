@@ -11,6 +11,10 @@ namespace Assets.EvoCellSim.Core
         public bool Alive { get; set; }
         public int GenomeId { get; set; }
         public int ClusterId { get; set; }
+        public int Energy { get; set; }
+        public int Damage { get; set; }
+        public float Pressure { get; set; }
+        public int MaxEnergy { get; set; }
     }
 
     public struct GenomeRecord : IIdentifiable
@@ -63,7 +67,8 @@ namespace Assets.EvoCellSim.Core
     {
         Move = 1,
         Mutation = 2,
-        Wait = 3
+        Wait = 3,
+        Repair = 4
     }
 
     public struct IntentRecord : IIdentifiable

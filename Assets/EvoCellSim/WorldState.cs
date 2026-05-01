@@ -87,6 +87,128 @@ namespace Assets.EvoCellSim.Core
             Intents.Add(intent);
         }
 
+        public void PassiveUpkeep()
+        {
+            for (var i = 0; i < Cells.Count; i++)
+            {
+                var cell = Cells.Get(i);
+                if (!cell.Alive)
+                {
+                    continue;
+                }
+
+                var updated = cell;
+                updated.Energy -= Settings.PassiveUpkeepCost;
+                updated.Pressure = CalculatePressure(cell.Id);
+
+                if (updated.Energy < 0)
+                {
+                    updated.Energy = 0;
+                    updated.Damage += 2;
+                }
+
+                var overpressure = updated.Pressure - Settings.PressurePerCell;
+                if (overpressure > 0)
+                {
+                    updated.Damage += (int)MathF.Ceiling(overpressure) * Settings.DamagePerOverpressure;
+                }
+
+                if (updated.MaxEnergy <= 0)
+                {
+                    updated.MaxEnergy = Settings.MaxEnergy;
+                }
+
+                if (updated.Energy > updated.MaxEnergy)
+                {
+                    updated.Energy = updated.MaxEnergy;
+                }
+
+                UpdateCell(in updated);
+            }
+        }
+
+        public void QueueRepairIntents()
+        {
+            foreach (var cell in Cells.Records)
+            {
+                if (!cell.Alive || cell.Damage <= 0 || cell.Energy < Settings.RepairEnergyCost)
+                {
+                    continue;
+                }
+
+                if (!HasActiveRepairModule(cell.Id))
+                {
+                    continue;
+                }
+
+                var intent = new IntentRecord
+                {
+                    Id = Intents.Count + 1,
+                    SourceCellId = cell.Id,
+                    TargetCellId = cell.Id,
+                    Kind = IntentKind.Repair
+                };
+
+                AddIntent(intent);
+            }
+        }
+
+        public bool HasActiveRepairModule(int cellId)
+        {
+            foreach (var module in Modules.Records)
+            {
+                if (module.OwnerCellId != cellId || !module.Active)
+                {
+                    continue;
+                }
+
+                if (module.ModuleTypeId == 3)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public float CalculatePressure(int cellId)
+        {
+            var cell = GetCellById(cellId);
+            var clusterId = cell.ClusterId;
+            var clusterSize = 0;
+
+            foreach (var other in Cells.Records)
+            {
+                if (other.Alive && other.ClusterId == clusterId)
+                {
+                    clusterSize++;
+                }
+            }
+
+            return clusterSize * Settings.PressurePerCell;
+        }
+
+        public void ApplyDeathAndRepair()
+        {
+            for (var i = 0; i < Cells.Count; i++)
+            {
+                var cell = Cells.Get(i);
+                if (!cell.Alive)
+                {
+                    continue;
+                }
+
+                var updated = cell;
+                if (updated.Damage >= Settings.DeathDamageThreshold)
+                {
+                    updated.Alive = false;
+                    updated.Energy = 0;
+                }
+
+                UpdateCell(in updated);
+            }
+        }
+
         public BehaviorDispatchResult QueueIntentsFromGenome(int cellId, int genomeId)
         {
             return BehaviorDispatcher.QueueIntentsFromGenome(this, cellId, genomeId);
