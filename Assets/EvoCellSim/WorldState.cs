@@ -4,6 +4,8 @@ namespace Assets.EvoCellSim.Core
 {
     public sealed class WorldState
     {
+        private readonly List<CellRecord> lastSnapshot = new List<CellRecord>();
+
         public SimulationSettings Settings { get; }
         public ulong Seed => Settings.Seed;
         public long Tick { get; private set; }
@@ -17,6 +19,7 @@ namespace Assets.EvoCellSim.Core
         public FieldStore Fields { get; }
         public SignalStore Signals { get; }
         public IntentQueue Intents { get; }
+        public IReadOnlyList<CellRecord> LastSnapshot => lastSnapshot;
 
         public WorldState(SimulationSettings settings)
         {
@@ -89,6 +92,11 @@ namespace Assets.EvoCellSim.Core
             Intents.Add(intent);
         }
 
+        public int AddSignal(in SignalRecord signal)
+        {
+            return Signals.Add(signal);
+        }
+
         public int AddBond(in BondRecord bond)
         {
             return Bonds.Add(bond);
@@ -149,13 +157,35 @@ namespace Assets.EvoCellSim.Core
 
                 var updated = cell;
                 updated.Energy -= Settings.PassiveUpkeepCost;
-                updated.Pressure = CalculatePressure(cell.Id);
 
                 if (updated.Energy < 0)
                 {
                     updated.Energy = 0;
-                    updated.Damage += 2;
+                    updated.MaintenanceDebt += 2;
                 }
+
+                UpdateCell(in updated);
+            }
+        }
+
+        public void ApplyPhysics()
+        {
+            for (var i = 0; i < Cells.Count; i++)
+            {
+                var cell = Cells.Get(i);
+                if (!cell.Alive)
+                {
+                    continue;
+                }
+
+                var updated = cell;
+                if (updated.MaintenanceDebt > 0)
+                {
+                    updated.Damage += updated.MaintenanceDebt;
+                    updated.MaintenanceDebt = 0;
+                }
+
+                updated.Pressure = CalculatePressure(cell.Id);
 
                 var overpressure = updated.Pressure - Settings.PressurePerCell;
                 if (overpressure > 0)
@@ -174,6 +204,111 @@ namespace Assets.EvoCellSim.Core
                 }
 
                 UpdateCell(in updated);
+            }
+        }
+
+        public void SampleLocalContext()
+        {
+            Signals.Clear();
+
+            var adjacency = new Dictionary<int, List<int>>();
+            for (var i = 0; i < Cells.Count; i++)
+            {
+                var cell = Cells.Get(i);
+                if (!cell.Alive)
+                {
+                    continue;
+                }
+
+                adjacency[cell.Id] = new List<int>();
+            }
+
+            for (var i = 0; i < Bonds.Count; i++)
+            {
+                var bond = Bonds.Get(i);
+                if (!adjacency.ContainsKey(bond.CellAId) || !adjacency.ContainsKey(bond.CellBId))
+                {
+                    continue;
+                }
+
+                adjacency[bond.CellAId].Add(bond.CellBId);
+                adjacency[bond.CellBId].Add(bond.CellAId);
+            }
+
+            var visited = new HashSet<int>();
+
+            for (var cellIndex = 0; cellIndex < Cells.Count; cellIndex++)
+            {
+                var cell = Cells.Get(cellIndex);
+                if (!cell.Alive || visited.Contains(cell.Id))
+                {
+                    continue;
+                }
+
+                var component = new List<int>();
+                var queue = new Queue<(int CellId, int Depth)>();
+                queue.Enqueue((cell.Id, 0));
+                visited.Add(cell.Id);
+
+                while (queue.Count > 0)
+                {
+                    var current = queue.Dequeue();
+                    component.Add(current.CellId);
+
+                    var currentCell = GetCellById(current.CellId);
+                    currentCell.BondDepth = current.Depth;
+                    currentCell.ClusterPosition = component.Count - 1;
+                    currentCell.NeighborCount = adjacency.TryGetValue(current.CellId, out var neighbors)
+                        ? neighbors.Count
+                        : 0;
+                    currentCell.LocalSignal = 1f / (1f + current.Depth);
+                    UpdateCell(in currentCell);
+
+                    AddSignal(new SignalRecord
+                    {
+                        Id = Signals.Count + 1,
+                        SourceCellId = cell.Id,
+                        Channel = 1,
+                        Intensity = currentCell.LocalSignal
+                    });
+
+                    if (!adjacency.TryGetValue(current.CellId, out var adjacentCells))
+                    {
+                        continue;
+                    }
+
+                    for (var neighborIndex = 0; neighborIndex < adjacentCells.Count; neighborIndex++)
+                    {
+                        var neighborId = adjacentCells[neighborIndex];
+                        if (visited.Contains(neighborId))
+                        {
+                            continue;
+                        }
+
+                        visited.Add(neighborId);
+                        queue.Enqueue((neighborId, current.Depth + 1));
+                    }
+                }
+            }
+        }
+
+        public void UpdateExpression()
+        {
+            Fields.Clear();
+
+            for (var i = 0; i < Cells.Count; i++)
+            {
+                var cell = Cells.Get(i);
+                if (!cell.Alive)
+                {
+                    continue;
+                }
+
+                Fields.Add(new FieldRecord
+                {
+                    Id = cell.Id,
+                    Value = cell.LocalSignal
+                });
             }
         }
 
@@ -476,6 +611,44 @@ namespace Assets.EvoCellSim.Core
         public int ResolveQueuedIntents()
         {
             return BehaviorDispatcher.ResolveQueuedIntents(this);
+        }
+
+        public void UpdateEnvironment()
+        {
+            var totalSignal = 0f;
+            var aliveCells = 0;
+
+            for (var i = 0; i < Cells.Count; i++)
+            {
+                var cell = Cells.Get(i);
+                if (!cell.Alive)
+                {
+                    continue;
+                }
+
+                totalSignal += cell.LocalSignal;
+                aliveCells++;
+            }
+
+            Fields.Add(new FieldRecord
+            {
+                Id = 0,
+                Value = aliveCells > 0 ? totalSignal / aliveCells : 0f
+            });
+        }
+
+        public void BuildSnapshot()
+        {
+            lastSnapshot.Clear();
+
+            for (var i = 0; i < Cells.Count; i++)
+            {
+                var cell = Cells.Get(i);
+                if (cell.Alive)
+                {
+                    lastSnapshot.Add(cell);
+                }
+            }
         }
 
         public GenomeDecodeResult DecodeInstructionGenome(int genomeId)

@@ -24,6 +24,7 @@ static class Program
         RunTest("Failure effect queues a wait intent on move failure", TestFailureEffectQueuesWaitIntent);
         RunTest("Invalid module or target combo fails canonically", TestDispatchInvalidModuleOrTargetFails);
         RunTest("Passive upkeep drains energy and applies overpressure damage", TestPassiveUpkeepEnergyAndPressure);
+        RunTest("Passive upkeep starvation becomes deferred damage", TestPassiveUpkeepStarvationDebt);
         RunTest("Repair intent queues and resolves from damaged repair cells", TestRepairIntentQueuesAndResolves);
         RunTest("Damage above threshold kills cells during survival update", TestDamageCausesDeath);
         RunTest("Bond updates split clusters and decay bonds", TestBondDecaySplitsClusters);
@@ -31,6 +32,11 @@ static class Program
         RunTest("Bond transfer is simultaneous, not sequential", TestBondTransferIsSimultaneous);
         RunTest("Bond creation accepts valid cell pairs and strong bonds persist", TestBondCreationAndPersistence);
         RunTest("Cascade failure damages fragmented clusters", TestCascadeFailureDamagesFragment);
+        RunTest("Local context sampling sets depth and signal deterministically", TestLocalContextSampling);
+        RunTest("Local context sampling is repeatable for identical worlds", TestLocalContextSamplingIsRepeatable);
+        RunTest("Bond depth condition affects behavior outcomes", TestBondDepthConditionAffectsBehavior);
+        RunTest("Full runner remains deterministic across ticks", TestRunnerRemainsDeterministicAcrossTicks);
+        RunTest("Runner builds expression, environment, and snapshot outputs", TestRunnerBuildsOutputs);
 
         Console.WriteLine(failures == 0
             ? "[CoreTests] ALL TESTS PASSED"
@@ -338,11 +344,24 @@ static class Program
         world.AddCell(new CellRecord { Id = 11, Alive = true, GenomeId = 1, ClusterId = 0, Energy = 3, MaxEnergy = 10, Damage = 0 });
 
         world.PassiveUpkeep();
+        world.ApplyPhysics();
 
         var cell = world.GetCellById(10);
         AssertEqual(2, cell.Energy, "Passive upkeep should drain the configured energy cost");
         AssertEqual(true, cell.Pressure > 0, "Pressure should be calculated for cells in a cluster");
         AssertEqual(true, cell.Damage >= 0, "Damage should remain non-negative after upkeep");
+    }
+
+    private static void TestPassiveUpkeepStarvationDebt()
+    {
+        var world = new WorldState(new SimulationSettings(24UL));
+        world.AddCell(new CellRecord { Id = 12, Alive = true, GenomeId = 1, ClusterId = 0, Energy = 0, MaxEnergy = 10, Damage = 0 });
+
+        world.PassiveUpkeep();
+        AssertEqual(0, world.GetCellById(12).Damage, "Starvation damage should be deferred until the physics phase");
+
+        world.ApplyPhysics();
+        AssertEqual(2, world.GetCellById(12).Damage, "Deferred starvation damage should be applied during the physics phase");
     }
 
     private static void TestRepairIntentQueuesAndResolves()
@@ -460,6 +479,154 @@ static class Program
         AssertEqual(0, world.GetCellById(32).Damage, "Primary fragment should not take cascade damage");
         AssertEqual(1, world.GetCellById(33).Damage, "Detached fragment should take cascade damage deterministically");
         AssertEqual(4, world.GetCellById(33).Energy, "Detached fragment should lose one energy during cascade failure");
+    }
+
+    private static void TestLocalContextSampling()
+    {
+        var world = new WorldState(new SimulationSettings(19UL));
+        world.AddCell(new CellRecord { Id = 50, Alive = true, GenomeId = 1, ClusterId = 50, Energy = 5, MaxEnergy = 10 });
+        world.AddCell(new CellRecord { Id = 51, Alive = true, GenomeId = 1, ClusterId = 50, Energy = 5, MaxEnergy = 10 });
+        world.AddBond(new BondRecord { Id = 1, CellAId = 50, CellBId = 51, Strength = 1.0f });
+        world.UpdateBondsAndClusters();
+
+        world.SampleLocalContext();
+
+        var root = world.GetCellById(50);
+        var leaf = world.GetCellById(51);
+
+        AssertEqual(0, root.BondDepth, "Root cell should sample zero bond depth");
+        AssertEqual(1, leaf.BondDepth, "Neighbor cell should sample one bond depth");
+        AssertEqual(0, root.ClusterPosition, "Root cell should be first in cluster position order");
+        AssertEqual(1, leaf.ClusterPosition, "Neighbor cell should be second in cluster position order");
+        AssertEqual(1, root.NeighborCount, "Root cell should see one neighbor");
+        AssertEqual(1, leaf.NeighborCount, "Leaf cell should see one neighbor");
+        AssertEqual(1f, root.LocalSignal, "Root cell signal should be strongest at depth zero");
+        AssertEqual(0.5f, leaf.LocalSignal, "Leaf cell signal should decay with depth");
+        AssertEqual(2, world.Signals.Count, "One signal record should be emitted per alive cell");
+    }
+
+    private static void TestLocalContextSamplingIsRepeatable()
+    {
+        var first = new WorldState(new SimulationSettings(20UL));
+        var second = new WorldState(new SimulationSettings(20UL));
+
+        first.AddCell(new CellRecord { Id = 60, Alive = true, GenomeId = 1, ClusterId = 60, Energy = 5, MaxEnergy = 10 });
+        first.AddCell(new CellRecord { Id = 61, Alive = true, GenomeId = 1, ClusterId = 60, Energy = 5, MaxEnergy = 10 });
+        first.AddBond(new BondRecord { Id = 1, CellAId = 60, CellBId = 61, Strength = 1.0f });
+        first.UpdateBondsAndClusters();
+        first.SampleLocalContext();
+
+        second.AddCell(new CellRecord { Id = 60, Alive = true, GenomeId = 1, ClusterId = 60, Energy = 5, MaxEnergy = 10 });
+        second.AddCell(new CellRecord { Id = 61, Alive = true, GenomeId = 1, ClusterId = 60, Energy = 5, MaxEnergy = 10 });
+        second.AddBond(new BondRecord { Id = 1, CellAId = 60, CellBId = 61, Strength = 1.0f });
+        second.UpdateBondsAndClusters();
+        second.SampleLocalContext();
+
+        var firstRoot = first.GetCellById(60);
+        var secondRoot = second.GetCellById(60);
+        var firstLeaf = first.GetCellById(61);
+        var secondLeaf = second.GetCellById(61);
+
+        AssertEqual(firstRoot.BondDepth, secondRoot.BondDepth, "Repeated worlds should sample the same root depth");
+        AssertEqual(firstRoot.ClusterPosition, secondRoot.ClusterPosition, "Repeated worlds should sample the same root position");
+        AssertEqual(firstLeaf.BondDepth, secondLeaf.BondDepth, "Repeated worlds should sample the same leaf depth");
+        AssertEqual(firstLeaf.ClusterPosition, secondLeaf.ClusterPosition, "Repeated worlds should sample the same leaf position");
+        AssertEqual(firstRoot.LocalSignal, secondRoot.LocalSignal, "Repeated worlds should sample the same root signal");
+        AssertEqual(firstLeaf.LocalSignal, secondLeaf.LocalSignal, "Repeated worlds should sample the same leaf signal");
+        AssertEqual(first.Signals.Count, second.Signals.Count, "Repeated worlds should emit the same number of signal records");
+    }
+
+    private static void TestBondDepthConditionAffectsBehavior()
+    {
+        var world = new WorldState(new SimulationSettings(21UL));
+        world.AddCell(new CellRecord { Id = 3, Alive = true, GenomeId = 1, ClusterId = 3, Energy = 5, MaxEnergy = 10 });
+        world.AddCell(new CellRecord { Id = 70, Alive = true, GenomeId = 1, ClusterId = 70, Energy = 5, MaxEnergy = 10 });
+        world.AddCell(new CellRecord { Id = 71, Alive = true, GenomeId = 1, ClusterId = 70, Energy = 5, MaxEnergy = 10 });
+        world.AddCell(new CellRecord { Id = 72, Alive = true, GenomeId = 1, ClusterId = 70, Energy = 5, MaxEnergy = 10 });
+        world.AddBond(new BondRecord { Id = 1, CellAId = 70, CellBId = 71, Strength = 1.0f });
+        world.AddBond(new BondRecord { Id = 2, CellAId = 71, CellBId = 72, Strength = 1.0f });
+
+        world.AddModule(new ModuleRecord { Id = 1, OwnerCellId = 70, ModuleTypeId = 1, Active = true });
+        world.AddModule(new ModuleRecord { Id = 2, OwnerCellId = 71, ModuleTypeId = 1, Active = true });
+        world.AddModule(new ModuleRecord { Id = 3, OwnerCellId = 72, ModuleTypeId = 1, Active = true });
+
+        var genome = new GenomeRecord
+        {
+            Id = 1,
+            ParentId = 0,
+            SpeciesGenome = Array.Empty<byte>(),
+            ModuleGenome = Array.Empty<byte>(),
+            InstructionGenome = new byte[] { 0x10, 0x41, 0x20, 0xFF }
+        };
+
+        world.AddGenome(in genome);
+        world.SampleLocalContext();
+
+        var rootResult = world.QueueIntentsFromGenome(70, 1);
+        var leafResult = world.QueueIntentsFromGenome(72, 1);
+
+        AssertEqual(false, rootResult.Success, "Root cell should fail the bond-depth condition");
+        AssertEqual(true, leafResult.Success, "Leaf cell should satisfy the bond-depth condition");
+        AssertEqual(2, world.Intents.Count, "One wait intent and one move intent should be queued deterministically");
+        AssertEqual(IntentKind.Wait, world.Intents.Get(0).Kind, "Root cell should queue a wait intent on failure");
+        AssertEqual(IntentKind.Move, world.Intents.Get(1).Kind, "Leaf cell should queue a move intent when context passes");
+    }
+
+    private static void TestRunnerRemainsDeterministicAcrossTicks()
+    {
+        var first = CreateContextSensitiveRunner(22UL);
+        var second = CreateContextSensitiveRunner(22UL);
+
+        for (var tick = 0; tick < 3; tick++)
+        {
+            first.Tick();
+            second.Tick();
+
+            AssertEqual(first.World.Tick, second.World.Tick, $"Tick counters should match at step {tick}");
+            AssertEqual(first.World.GetCellById(80).Energy, second.World.GetCellById(80).Energy, $"Root energy should match at step {tick}");
+            AssertEqual(first.World.GetCellById(81).Energy, second.World.GetCellById(81).Energy, $"Leaf energy should match at step {tick}");
+            AssertEqual(first.World.GetCellById(82).Energy, second.World.GetCellById(82).Energy, $"Tail energy should match at step {tick}");
+            AssertEqual(first.World.GetCellById(80).ClusterId, second.World.GetCellById(80).ClusterId, $"Root cluster should match at step {tick}");
+            AssertEqual(first.World.GetCellById(81).ClusterId, second.World.GetCellById(81).ClusterId, $"Leaf cluster should match at step {tick}");
+            AssertEqual(first.World.GetCellById(82).ClusterId, second.World.GetCellById(82).ClusterId, $"Tail cluster should match at step {tick}");
+            AssertEqual(first.World.Signals.Count, second.World.Signals.Count, $"Signal count should match at step {tick}");
+        }
+    }
+
+    private static SimulationRunner CreateContextSensitiveRunner(ulong seed)
+    {
+        var runner = new SimulationRunner(new SimulationSettings(seed));
+        runner.World.AddCell(new CellRecord { Id = 3, Alive = true, GenomeId = 1, ClusterId = 3, Energy = 5, MaxEnergy = 10 });
+        runner.World.AddCell(new CellRecord { Id = 80, Alive = true, GenomeId = 1, ClusterId = 80, Energy = 5, MaxEnergy = 10 });
+        runner.World.AddCell(new CellRecord { Id = 81, Alive = true, GenomeId = 1, ClusterId = 80, Energy = 5, MaxEnergy = 10 });
+        runner.World.AddCell(new CellRecord { Id = 82, Alive = true, GenomeId = 1, ClusterId = 80, Energy = 5, MaxEnergy = 10 });
+        runner.World.AddBond(new BondRecord { Id = 1, CellAId = 80, CellBId = 81, Strength = 1.0f });
+        runner.World.AddBond(new BondRecord { Id = 2, CellAId = 81, CellBId = 82, Strength = 1.0f });
+        runner.World.AddModule(new ModuleRecord { Id = 1, OwnerCellId = 80, ModuleTypeId = 1, Active = true });
+        runner.World.AddModule(new ModuleRecord { Id = 2, OwnerCellId = 81, ModuleTypeId = 1, Active = true });
+        runner.World.AddModule(new ModuleRecord { Id = 3, OwnerCellId = 82, ModuleTypeId = 1, Active = true });
+
+        var genome = new GenomeRecord
+        {
+            Id = 1,
+            ParentId = 0,
+            SpeciesGenome = Array.Empty<byte>(),
+            ModuleGenome = Array.Empty<byte>(),
+            InstructionGenome = new byte[] { 0x10, 0x41, 0x20, 0xFF }
+        };
+
+        runner.World.AddGenome(in genome);
+        return runner;
+    }
+
+    private static void TestRunnerBuildsOutputs()
+    {
+        var runner = CreateContextSensitiveRunner(23UL);
+        runner.Tick();
+
+        AssertEqual(true, runner.World.Fields.Count >= 4, "Expression and environment phases should populate field outputs");
+        AssertEqual(4, runner.World.LastSnapshot.Count, "Snapshot should capture all alive cells deterministically");
+        AssertEqual(1f, runner.World.GetCellById(3).LocalSignal, "Root local signal should remain available after the tick");
     }
 
     private static void AssertEqual<T>(T expected, T actual, string message)

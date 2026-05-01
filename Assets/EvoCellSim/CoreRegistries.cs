@@ -33,6 +33,7 @@ namespace Assets.EvoCellSim.Core
             Tokens.Register(new TokenPattern(6, TokenType.Control, new byte[] { 0xFF }));
             Tokens.Register(new TokenPattern(7, TokenType.Condition, new byte[] { 0x40 }));
             Tokens.Register(new TokenPattern(8, TokenType.Opcode, new byte[] { 0x12 }));
+            Tokens.Register(new TokenPattern(9, TokenType.Condition, new byte[] { 0x41 }));
 
             Opcodes.Register(new OpcodeDefinition(1, "Move", requiredOperands: 1, optionalOperands: 0, allowModifiers: false, hasFailureEffect: true));
             Opcodes.Register(new OpcodeDefinition(2, "Wait", requiredOperands: 0, optionalOperands: 0, allowModifiers: false, hasFailureEffect: false));
@@ -47,6 +48,7 @@ namespace Assets.EvoCellSim.Core
             Mutations.Register(new MutationOperator(1, "SimplePointMutation", MutateHook));
             TargetValidators.Register(1, MoveTargetValidator);
             Conditions.Register(new ConditionDefinition(7, "HasTarget"), HasTargetConditionEvaluator);
+            Conditions.Register(new ConditionDefinition(9, "HasBondDepth"), HasBondDepthConditionEvaluator);
             Opcodes.Register(new OpcodeDefinition(8, "Mutate", requiredOperands: 0, optionalOperands: 0, allowModifiers: false, hasFailureEffect: true, mutationOperatorId: 1));
         }
 
@@ -87,6 +89,21 @@ namespace Assets.EvoCellSim.Core
             if (!world.TryGetCell(targetId, out var targetCell) || !targetCell.Alive)
             {
                 return ConditionResult.Failure($"Target cell {targetId} is not alive.");
+            }
+
+            return ConditionResult.Success();
+        }
+
+        private static ConditionResult HasBondDepthConditionEvaluator(WorldState world, int sourceCellId, DecodedInstruction instruction)
+        {
+            if (!world.TryGetCell(sourceCellId, out var sourceCell))
+            {
+                return ConditionResult.Failure($"Source cell {sourceCellId} does not exist.");
+            }
+
+            if (sourceCell.BondDepth <= 0)
+            {
+                return ConditionResult.Failure($"Source cell {sourceCellId} is not deep enough in the cluster.");
             }
 
             return ConditionResult.Success();

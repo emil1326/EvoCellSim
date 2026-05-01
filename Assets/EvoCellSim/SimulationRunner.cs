@@ -46,19 +46,21 @@ namespace Assets.EvoCellSim.Core
 
         private void SampleLocalContext()
         {
+            World.SampleLocalContext();
         }
 
         private void UpdateExpression()
         {
+            World.UpdateExpression();
         }
 
         private void EvaluateRules()
         {
+            World.QueueIntentsForAllCells();
         }
 
         private void QueueIntents()
         {
-            World.QueueIntentsForAllCells();
             World.QueueRepairIntents();
         }
 
@@ -69,6 +71,7 @@ namespace Assets.EvoCellSim.Core
 
         private void ApplyPhysics()
         {
+            World.ApplyPhysics();
         }
 
         private void UpdateBondsAndClusters()
@@ -83,10 +86,12 @@ namespace Assets.EvoCellSim.Core
 
         private void UpdateEnvironment()
         {
+            World.UpdateEnvironment();
         }
 
         private void BuildSnapshot()
         {
+            World.BuildSnapshot();
         }
     }
 }

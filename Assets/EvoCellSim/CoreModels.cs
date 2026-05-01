@@ -15,6 +15,11 @@ namespace Assets.EvoCellSim.Core
         public int Damage { get; set; }
         public float Pressure { get; set; }
         public int MaxEnergy { get; set; }
+        public int MaintenanceDebt { get; set; }
+        public int NeighborCount { get; set; }
+        public int BondDepth { get; set; }
+        public int ClusterPosition { get; set; }
+        public float LocalSignal { get; set; }
     }
 
     public struct GenomeRecord : IIdentifiable
