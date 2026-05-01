@@ -20,9 +20,11 @@ static class Program
         RunTest("Opcode modifier policy rejects unexpected modifiers", TestOpcodeModifierPolicy);
         RunTest("Valid decoded rule queues a move intent", TestDispatchQueuesMoveIntent);
         RunTest("Condition token validation works for move rules", TestDispatchWithConditionToken);
+        RunTest("Unknown condition tokens fail canonically", TestUnknownConditionTokenFailsCanonically);
         RunTest("Mutation operator hook is invoked for mutate opcode", TestDispatchMutationOperatorHook);
         RunTest("Failure effect queues a wait intent on move failure", TestFailureEffectQueuesWaitIntent);
         RunTest("Invalid module or target combo fails canonically", TestDispatchInvalidModuleOrTargetFails);
+        RunTest("Dead cells do not dispatch intents", TestDeadCellsDoNotDispatchIntents);
         RunTest("Passive upkeep drains energy and applies overpressure damage", TestPassiveUpkeepEnergyAndPressure);
         RunTest("Passive upkeep starvation becomes deferred damage", TestPassiveUpkeepStarvationDebt);
         RunTest("Repair intent queues and resolves from damaged repair cells", TestRepairIntentQueuesAndResolves);
@@ -35,6 +37,8 @@ static class Program
         RunTest("Local context sampling sets depth and signal deterministically", TestLocalContextSampling);
         RunTest("Local context sampling is repeatable for identical worlds", TestLocalContextSamplingIsRepeatable);
         RunTest("Bond depth condition affects behavior outcomes", TestBondDepthConditionAffectsBehavior);
+        RunTest("Environment delivers signals across bonded cells", TestEnvironmentDeliversSignals);
+        RunTest("Signal provenance tracks emitting cells", TestSignalProvenanceTracksEmittingCells);
         RunTest("Full runner remains deterministic across ticks", TestRunnerRemainsDeterministicAcrossTicks);
         RunTest("Runner builds expression, environment, and snapshot outputs", TestRunnerBuildsOutputs);
 
@@ -290,6 +294,16 @@ static class Program
         AssertEqual(1, world.Intents.Count, "Intent queue should contain the move intent");
     }
 
+    private static void TestUnknownConditionTokenFailsCanonically()
+    {
+        var world = new WorldState(new SimulationSettings(25UL));
+        var conditionResult = world.Registries.Conditions.TryEvaluate(99, world, 1, new DecodedInstruction(), out var result);
+
+        AssertEqual(false, conditionResult, "Unknown conditions should not be treated as registered");
+        AssertEqual(false, result.Matches, "Unknown conditions should fail deterministically");
+        AssertEqual("Condition 99 is not registered.", result.FailureReason!, "Unknown conditions should report a canonical failure reason");
+    }
+
     private static void TestFailureEffectQueuesWaitIntent()
     {
         var world = new WorldState(new SimulationSettings(11UL));
@@ -335,6 +349,29 @@ static class Program
         AssertEqual(0, dispatchResult.QueuedIntents, "No intent should be queued when module/target combo is invalid");
         AssertEqual(0, world.Intents.Count, "Intent queue should remain empty on failure");
         AssertEqual(true, dispatchResult.FailureReasons.Count > 0, "Failure reasons should be reported canonically");
+    }
+
+    private static void TestDeadCellsDoNotDispatchIntents()
+    {
+        var world = new WorldState(new SimulationSettings(27UL));
+        world.AddCell(new CellRecord { Id = 1, Alive = false, GenomeId = 1, ClusterId = 0 });
+        world.AddCell(new CellRecord { Id = 3, Alive = true, GenomeId = 0, ClusterId = 0 });
+        world.AddModule(new ModuleRecord { Id = 1, OwnerCellId = 1, ModuleTypeId = 1, Active = true });
+
+        var genome = new GenomeRecord
+        {
+            Id = 1,
+            ParentId = 0,
+            SpeciesGenome = Array.Empty<byte>(),
+            ModuleGenome = Array.Empty<byte>(),
+            InstructionGenome = new byte[] { 0x10, 0x20, 0xFF }
+        };
+
+        world.AddGenome(in genome);
+        var dispatchResult = world.QueueIntentsForAllCells();
+
+        AssertEqual(false, dispatchResult.Success, "Dead cells should not dispatch intents");
+        AssertEqual(0, world.Intents.Count, "Dead cells should not queue intents");
     }
 
     private static void TestPassiveUpkeepEnergyAndPressure()
@@ -570,6 +607,42 @@ static class Program
         AssertEqual(2, world.Intents.Count, "One wait intent and one move intent should be queued deterministically");
         AssertEqual(IntentKind.Wait, world.Intents.Get(0).Kind, "Root cell should queue a wait intent on failure");
         AssertEqual(IntentKind.Move, world.Intents.Get(1).Kind, "Leaf cell should queue a move intent when context passes");
+    }
+
+    private static void TestEnvironmentDeliversSignals()
+    {
+        var world = new WorldState(new SimulationSettings(26UL));
+        world.AddCell(new CellRecord { Id = 90, Alive = true, GenomeId = 1, ClusterId = 90, Energy = 5, MaxEnergy = 10 });
+        world.AddCell(new CellRecord { Id = 91, Alive = true, GenomeId = 1, ClusterId = 90, Energy = 5, MaxEnergy = 10 });
+        world.AddCell(new CellRecord { Id = 92, Alive = true, GenomeId = 1, ClusterId = 90, Energy = 5, MaxEnergy = 10 });
+        world.AddBond(new BondRecord { Id = 1, CellAId = 90, CellBId = 91, Strength = 1.0f });
+        world.AddBond(new BondRecord { Id = 2, CellAId = 91, CellBId = 92, Strength = 1.0f });
+
+        world.UpdateBondsAndClusters();
+        world.SampleLocalContext();
+        world.UpdateEnvironment();
+
+        var left = world.GetCellById(90);
+        var middle = world.GetCellById(91);
+        var right = world.GetCellById(92);
+
+        AssertEqual(true, middle.ReceivedSignal > left.ReceivedSignal, "Middle cell should receive a stronger blended signal than the edge cell");
+        AssertEqual(true, middle.ReceivedSignal > right.ReceivedSignal, "Middle cell should receive a stronger blended signal than the other edge cell");
+        AssertEqual(3, world.Signals.Count, "Environment should emit one delivered signal per alive cell");
+    }
+
+    private static void TestSignalProvenanceTracksEmittingCells()
+    {
+        var world = new WorldState(new SimulationSettings(28UL));
+        world.AddCell(new CellRecord { Id = 100, Alive = true, GenomeId = 1, ClusterId = 100, Energy = 5, MaxEnergy = 10 });
+        world.AddCell(new CellRecord { Id = 101, Alive = true, GenomeId = 1, ClusterId = 100, Energy = 5, MaxEnergy = 10 });
+        world.AddBond(new BondRecord { Id = 1, CellAId = 100, CellBId = 101, Strength = 1.0f });
+
+        world.SampleLocalContext();
+
+        AssertEqual(2, world.Signals.Count, "Each sampled cell should emit one signal record");
+        AssertEqual(100, world.Signals.Get(0).SourceCellId, "First signal should originate from the first sampled cell");
+        AssertEqual(101, world.Signals.Get(1).SourceCellId, "Second signal should originate from the second sampled cell");
     }
 
     private static void TestRunnerRemainsDeterministicAcrossTicks()

@@ -484,7 +484,7 @@ namespace Assets.EvoCellSim.Core
                 return true;
             }
 
-            result = ConditionResult.Success();
+            result = ConditionResult.Failure($"Condition {id} is not registered.");
             return false;
         }
     }

@@ -267,7 +267,7 @@ namespace Assets.EvoCellSim.Core
                     AddSignal(new SignalRecord
                     {
                         Id = Signals.Count + 1,
-                        SourceCellId = cell.Id,
+                        SourceCellId = current.CellId,
                         Channel = 1,
                         Intensity = currentCell.LocalSignal
                     });
@@ -600,6 +600,11 @@ namespace Assets.EvoCellSim.Core
 
             foreach (var cell in Cells.Records)
             {
+                if (!cell.Alive)
+                {
+                    continue;
+                }
+
                 var result = BehaviorDispatcher.QueueIntentsFromGenome(this, cell.Id, cell.GenomeId);
                 aggregate.QueuedIntents += result.QueuedIntents;
                 aggregate.FailureReasons.AddRange(result.FailureReasons);
@@ -615,6 +620,31 @@ namespace Assets.EvoCellSim.Core
 
         public void UpdateEnvironment()
         {
+            var adjacency = new Dictionary<int, List<int>>();
+            for (var i = 0; i < Cells.Count; i++)
+            {
+                var cell = Cells.Get(i);
+                if (!cell.Alive)
+                {
+                    continue;
+                }
+
+                adjacency[cell.Id] = new List<int>();
+            }
+
+            for (var i = 0; i < Bonds.Count; i++)
+            {
+                var bond = Bonds.Get(i);
+                if (!adjacency.ContainsKey(bond.CellAId) || !adjacency.ContainsKey(bond.CellBId))
+                {
+                    continue;
+                }
+
+                adjacency[bond.CellAId].Add(bond.CellBId);
+                adjacency[bond.CellBId].Add(bond.CellAId);
+            }
+
+            Signals.Clear();
             var totalSignal = 0f;
             var aliveCells = 0;
 
@@ -626,7 +656,43 @@ namespace Assets.EvoCellSim.Core
                     continue;
                 }
 
-                totalSignal += cell.LocalSignal;
+                var deliveredSignal = cell.LocalSignal;
+                var neighborSignalSum = 0f;
+                var neighborCount = 0;
+
+                if (adjacency.TryGetValue(cell.Id, out var neighbors))
+                {
+                    for (var neighborIndex = 0; neighborIndex < neighbors.Count; neighborIndex++)
+                    {
+                        var neighbor = GetCellById(neighbors[neighborIndex]);
+                        if (!neighbor.Alive)
+                        {
+                            continue;
+                        }
+
+                        neighborSignalSum += neighbor.LocalSignal;
+                        neighborCount++;
+                    }
+                }
+
+                if (neighborCount > 0)
+                {
+                    deliveredSignal = cell.LocalSignal + neighborSignalSum;
+                }
+
+                var updated = cell;
+                updated.ReceivedSignal = deliveredSignal;
+                UpdateCell(in updated);
+
+                AddSignal(new SignalRecord
+                {
+                    Id = Signals.Count + 1,
+                    SourceCellId = cell.Id,
+                    Channel = 2,
+                    Intensity = deliveredSignal
+                });
+
+                totalSignal += deliveredSignal;
                 aliveCells++;
             }
 

@@ -54,7 +54,15 @@ namespace Assets.EvoCellSim.Core
                 var conditionFailed = false;
                 foreach (var conditionId in instruction.ConditionTokenIds)
                 {
-                    if (world.Registries.Conditions.TryEvaluate(conditionId, world, cellId, instruction, out var conditionResult) && !conditionResult.Matches)
+                    if (!world.Registries.Conditions.TryEvaluate(conditionId, world, cellId, instruction, out var conditionResult))
+                    {
+                        result.FailureReasons.Add(conditionResult.FailureReason ?? $"Condition {conditionId} is not registered.");
+                        TryQueueFailureEffect(world, result, cellId, instruction, conditionResult.FailureReason ?? $"Condition {conditionId} is not registered.");
+                        conditionFailed = true;
+                        break;
+                    }
+
+                    if (!conditionResult.Matches)
                     {
                         result.FailureReasons.Add(conditionResult.FailureReason ?? "Condition validation failed.");
                         TryQueueFailureEffect(world, result, cellId, instruction, conditionResult.FailureReason ?? "Condition validation failed.");

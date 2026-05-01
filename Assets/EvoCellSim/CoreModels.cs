@@ -20,6 +20,7 @@ namespace Assets.EvoCellSim.Core
         public int BondDepth { get; set; }
         public int ClusterPosition { get; set; }
         public float LocalSignal { get; set; }
+        public float ReceivedSignal { get; set; }
     }
 
     public struct GenomeRecord : IIdentifiable
