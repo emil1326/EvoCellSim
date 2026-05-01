@@ -2,6 +2,12 @@
 
 This plan turns the V2 spec into buildable engine work. It assumes one world seed, one world RNG, headless simulation core, and Unity as a read-only viewer and input layer.
 
+## Current Status
+
+- Phase 0 is now implemented as the core foundation: namespace split, `WorldState`, registries, and flat core stores.
+- Phase 1 is also implemented as the deterministic runner scaffold: world settings, single-seed RNG, canonical tick phases, and an empty tick loop.
+- Later phases still need their own implementation work, but the engine now has a clean place to attach them.
+
 ## 1. Build Goals
 
 - Make the simulation core run without Unity.
