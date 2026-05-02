@@ -47,6 +47,11 @@ static class Program
         RunTest("Species ceiling blocks offspring beyond MaxCellCount", TestSpeciesCeilingBlocksOffspring);
         RunTest("Module ceiling rejects modules beyond MaxModulesPerCell", TestMaxModulesPerCellEnforced);
         RunTest("Genome mutation is deterministic for the same seed", TestMutationIsDeterministic);
+        RunTest("Snapshot All region returns all alive cells", TestSnapshotAllReturnsAliveCells);
+        RunTest("Snapshot cluster filter excludes other clusters", TestSnapshotClusterFilter);
+        RunTest("Snapshot MaxCells cap is respected", TestSnapshotMaxCellsCap);
+        RunTest("Snapshot never mutates world state", TestSnapshotDoesNotMutateWorld);
+        RunTest("Snapshot tick matches world tick at query time", TestSnapshotTickMatchesWorld);
 
         Console.WriteLine(failures == 0
             ? "[CoreTests] ALL TESTS PASSED"
@@ -830,6 +835,76 @@ static class Program
         AssertSequenceEqual(offspring1.SpeciesGenome, offspring2.SpeciesGenome, "Species genome mutations should be identical for the same seed");
         AssertSequenceEqual(offspring1.ModuleGenome, offspring2.ModuleGenome, "Module genome mutations should be identical for the same seed");
         AssertSequenceEqual(offspring1.InstructionGenome, offspring2.InstructionGenome, "Instruction genome mutations should be identical for the same seed");
+    }
+
+    private static void TestSnapshotAllReturnsAliveCells()
+    {
+        var world = new WorldState(new SimulationSettings(300UL));
+        world.AddCell(new CellRecord { Id = 1, Alive = true, ClusterId = 1, Energy = 10, MaxEnergy = 20 });
+        world.AddCell(new CellRecord { Id = 2, Alive = true, ClusterId = 2, Energy = 10, MaxEnergy = 20 });
+        world.AddCell(new CellRecord { Id = 3, Alive = false, ClusterId = 1, Energy = 0, MaxEnergy = 20 });
+
+        var buffer = world.QuerySnapshot(SnapshotRegion.All);
+
+        AssertEqual(2, buffer.CellCount, "Snapshot should include only alive cells");
+        AssertEqual(1, buffer.Cells[0].Id, "First snapshot cell should match first alive cell");
+        AssertEqual(2, buffer.Cells[1].Id, "Second snapshot cell should match second alive cell");
+    }
+
+    private static void TestSnapshotClusterFilter()
+    {
+        var world = new WorldState(new SimulationSettings(301UL));
+        world.AddCell(new CellRecord { Id = 10, Alive = true, ClusterId = 10, Energy = 5, MaxEnergy = 20 });
+        world.AddCell(new CellRecord { Id = 11, Alive = true, ClusterId = 10, Energy = 5, MaxEnergy = 20 });
+        world.AddCell(new CellRecord { Id = 20, Alive = true, ClusterId = 20, Energy = 5, MaxEnergy = 20 });
+
+        var buffer = world.QuerySnapshot(new SnapshotRegion(clusterId: 10));
+
+        AssertEqual(2, buffer.CellCount, "Cluster filter should return only cells in that cluster");
+        AssertEqual(10, buffer.Cells[0].ClusterId, "Returned cells should belong to the queried cluster");
+        AssertEqual(10, buffer.Cells[1].ClusterId, "Returned cells should belong to the queried cluster");
+    }
+
+    private static void TestSnapshotMaxCellsCap()
+    {
+        var world = new WorldState(new SimulationSettings(302UL));
+        world.AddCell(new CellRecord { Id = 1, Alive = true, ClusterId = 1, Energy = 5, MaxEnergy = 20 });
+        world.AddCell(new CellRecord { Id = 2, Alive = true, ClusterId = 1, Energy = 5, MaxEnergy = 20 });
+        world.AddCell(new CellRecord { Id = 3, Alive = true, ClusterId = 1, Energy = 5, MaxEnergy = 20 });
+
+        var buffer = world.QuerySnapshot(new SnapshotRegion(clusterId: 1, maxCells: 2));
+
+        AssertEqual(2, buffer.CellCount, "MaxCells cap should limit snapshot results");
+    }
+
+    private static void TestSnapshotDoesNotMutateWorld()
+    {
+        var world = new WorldState(new SimulationSettings(303UL));
+        world.AddCell(new CellRecord { Id = 1, Alive = true, ClusterId = 1, Energy = 15, MaxEnergy = 20, Damage = 3 });
+
+        var tickBefore = world.Tick;
+        var energyBefore = world.GetCellById(1).Energy;
+        var damageBefore = world.GetCellById(1).Damage;
+
+        world.QuerySnapshot(SnapshotRegion.All);
+
+        AssertEqual(tickBefore, world.Tick, "Tick should not advance after a snapshot query");
+        AssertEqual(energyBefore, world.GetCellById(1).Energy, "Cell energy should not change after a snapshot query");
+        AssertEqual(damageBefore, world.GetCellById(1).Damage, "Cell damage should not change after a snapshot query");
+    }
+
+    private static void TestSnapshotTickMatchesWorld()
+    {
+        var world = new WorldState(new SimulationSettings(304UL));
+        world.AddCell(new CellRecord { Id = 1, Alive = true, ClusterId = 1, Energy = 10, MaxEnergy = 20 });
+        world.AdvanceTick();
+        world.AdvanceTick();
+
+        var buffer = world.QuerySnapshot(SnapshotRegion.All);
+
+        AssertEqual(2L, buffer.Tick, "Snapshot tick should reflect world tick at query time");
+        AssertEqual(1, buffer.Cells[0].Id, "Snapshot cell id should be copied correctly");
+        AssertEqual(10, buffer.Cells[0].Energy, "Snapshot cell energy should be copied correctly");
     }
 
     private static void AssertEqual<T>(T expected, T actual, string message)

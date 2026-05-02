@@ -816,6 +816,37 @@ namespace Assets.EvoCellSim.Core
             });
         }
 
+        public SnapshotBuffer QuerySnapshot(SnapshotRegion region)
+        {
+            var snapCells = new List<CellSnapshot>();
+
+            for (var i = 0; i < Cells.Count && snapCells.Count < region.MaxCells; i++)
+            {
+                var cell = Cells.Get(i);
+                if (!cell.Alive)
+                    continue;
+                if (region.ClusterId.HasValue && cell.ClusterId != region.ClusterId.Value)
+                    continue;
+
+                snapCells.Add(new CellSnapshot
+                {
+                    Id = cell.Id,
+                    ClusterId = cell.ClusterId,
+                    GenomeId = cell.GenomeId,
+                    Energy = cell.Energy,
+                    MaxEnergy = cell.MaxEnergy,
+                    Damage = cell.Damage,
+                    NeighborCount = cell.NeighborCount,
+                    BondDepth = cell.BondDepth,
+                    LocalSignal = cell.LocalSignal,
+                    ReceivedSignal = cell.ReceivedSignal,
+                    ReprodCooldown = cell.ReprodCooldown
+                });
+            }
+
+            return new SnapshotBuffer(Tick, region, snapCells);
+        }
+
         public void BuildSnapshot()
         {
             lastSnapshot.Clear();
