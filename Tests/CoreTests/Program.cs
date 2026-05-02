@@ -41,6 +41,12 @@ static class Program
         RunTest("Signal provenance tracks emitting cells", TestSignalProvenanceTracksEmittingCells);
         RunTest("Full runner remains deterministic across ticks", TestRunnerRemainsDeterministicAcrossTicks);
         RunTest("Runner builds expression, environment, and snapshot outputs", TestRunnerBuildsOutputs);
+        RunTest("Offspring is created with correct genome lineage", TestOffspringCreationBasic);
+        RunTest("Reproduction deducts energy and sets cooldown on parent", TestReproductionDeductsEnergyAndSetsCooldown);
+        RunTest("Reproduction is blocked when parent energy is insufficient", TestReproductionBlockedByInsufficientEnergy);
+        RunTest("Species ceiling blocks offspring beyond MaxCellCount", TestSpeciesCeilingBlocksOffspring);
+        RunTest("Module ceiling rejects modules beyond MaxModulesPerCell", TestMaxModulesPerCellEnforced);
+        RunTest("Genome mutation is deterministic for the same seed", TestMutationIsDeterministic);
 
         Console.WriteLine(failures == 0
             ? "[CoreTests] ALL TESTS PASSED"
@@ -700,6 +706,130 @@ static class Program
         AssertEqual(true, runner.World.Fields.Count >= 4, "Expression and environment phases should populate field outputs");
         AssertEqual(4, runner.World.LastSnapshot.Count, "Snapshot should capture all alive cells deterministically");
         AssertEqual(1f, runner.World.GetCellById(3).LocalSignal, "Root local signal should remain available after the tick");
+    }
+
+    private static void TestOffspringCreationBasic()
+    {
+        var world = new WorldState(new SimulationSettings(200UL));
+        var parentGenome = new GenomeRecord
+        {
+            Id = 1,
+            ParentId = 0,
+            SpeciesGenome = new byte[] { 0x01, 0x02 },
+            ModuleGenome = new byte[] { 0x03 },
+            InstructionGenome = new byte[] { 0x10 }
+        };
+        world.AddGenome(in parentGenome);
+        world.AddCell(new CellRecord { Id = 1, Alive = true, GenomeId = 1, ClusterId = 1, Energy = 15, MaxEnergy = 20 });
+
+        var offspringIndex = world.TryCreateOffspring(1, 1);
+
+        AssertEqual(true, offspringIndex.HasValue, "Offspring should be created when parent has sufficient energy");
+        AssertEqual(2, world.Cells.Count, "Two cells should exist after reproduction");
+        var offspringCell = world.Cells.Get(offspringIndex!.Value);
+        AssertEqual(true, offspringCell.Alive, "Offspring cell should be alive");
+        var offspringGenome = world.Genomes.GetById(offspringCell.GenomeId);
+        AssertEqual(1, offspringGenome.ParentId, "Offspring genome should reference parent genome id");
+    }
+
+    private static void TestReproductionDeductsEnergyAndSetsCooldown()
+    {
+        var world = new WorldState(new SimulationSettings(201UL));
+        var genome = new GenomeRecord
+        {
+            Id = 1, ParentId = 0,
+            SpeciesGenome = Array.Empty<byte>(),
+            ModuleGenome = Array.Empty<byte>(),
+            InstructionGenome = Array.Empty<byte>()
+        };
+        world.AddGenome(in genome);
+        world.AddCell(new CellRecord { Id = 1, Alive = true, GenomeId = 1, ClusterId = 1, Energy = 15, MaxEnergy = 20 });
+
+        world.TryCreateOffspring(1, 1);
+
+        var parent = world.GetCellById(1);
+        AssertEqual(15 - world.Settings.ReproductionEnergyCost, parent.Energy, "Parent energy should decrease by reproduction cost");
+        AssertEqual(world.Settings.ReproductionCooldown, parent.ReprodCooldown, "Parent cooldown should be set after reproduction");
+    }
+
+    private static void TestReproductionBlockedByInsufficientEnergy()
+    {
+        var world = new WorldState(new SimulationSettings(202UL));
+        var genome = new GenomeRecord
+        {
+            Id = 1, ParentId = 0,
+            SpeciesGenome = Array.Empty<byte>(),
+            ModuleGenome = Array.Empty<byte>(),
+            InstructionGenome = Array.Empty<byte>()
+        };
+        world.AddGenome(in genome);
+        world.AddCell(new CellRecord { Id = 1, Alive = true, GenomeId = 1, ClusterId = 1, Energy = 5, MaxEnergy = 20 });
+
+        var result = world.TryCreateOffspring(1, 1);
+
+        AssertEqual(false, result.HasValue, "Reproduction should fail when energy is below cost");
+        AssertEqual(1, world.Cells.Count, "No offspring should be created when energy is insufficient");
+    }
+
+    private static void TestSpeciesCeilingBlocksOffspring()
+    {
+        var settings = new SimulationSettings(203UL) { MaxCellCount = 1 };
+        var world = new WorldState(settings);
+        var genome = new GenomeRecord
+        {
+            Id = 1, ParentId = 0,
+            SpeciesGenome = Array.Empty<byte>(),
+            ModuleGenome = Array.Empty<byte>(),
+            InstructionGenome = Array.Empty<byte>()
+        };
+        world.AddGenome(in genome);
+        world.AddCell(new CellRecord { Id = 1, Alive = true, GenomeId = 1, ClusterId = 1, Energy = 15, MaxEnergy = 20 });
+
+        var result = world.TryCreateOffspring(1, 1);
+
+        AssertEqual(false, result.HasValue, "Offspring should be blocked when live cell count equals MaxCellCount");
+        AssertEqual(1, world.Cells.Count, "Cell count should not exceed ceiling");
+    }
+
+    private static void TestMaxModulesPerCellEnforced()
+    {
+        var settings = new SimulationSettings(204UL) { MaxModulesPerCell = 2 };
+        var world = new WorldState(settings);
+        world.AddCell(new CellRecord { Id = 1, Alive = true, Energy = 10, MaxEnergy = 20, ClusterId = 1 });
+
+        var r1 = world.AddModule(new ModuleRecord { Id = 1, OwnerCellId = 1, ModuleTypeId = 1, Active = true });
+        var r2 = world.AddModule(new ModuleRecord { Id = 2, OwnerCellId = 1, ModuleTypeId = 2, Active = true });
+        var r3 = world.AddModule(new ModuleRecord { Id = 3, OwnerCellId = 1, ModuleTypeId = 3, Active = true });
+
+        AssertEqual(true, r1 >= 0, "First module should be accepted");
+        AssertEqual(true, r2 >= 0, "Second module should be accepted");
+        AssertEqual(-1, r3, "Third module should be rejected when MaxModulesPerCell is reached");
+        AssertEqual(2, world.Modules.Count, "Module store should contain exactly two modules");
+    }
+
+    private static void TestMutationIsDeterministic()
+    {
+        var sourceGenome = new GenomeRecord
+        {
+            Id = 1, ParentId = 0,
+            SpeciesGenome = new byte[] { 0xAA, 0xBB, 0xCC },
+            ModuleGenome = new byte[] { 0x11, 0x22 },
+            InstructionGenome = new byte[] { 0x10, 0x41, 0xFF }
+        };
+
+        var world1 = new WorldState(new SimulationSettings(205UL));
+        var g1 = sourceGenome;
+        world1.AddGenome(in g1);
+        var offspring1 = world1.GenerateOffspringGenome(1);
+
+        var world2 = new WorldState(new SimulationSettings(205UL));
+        var g2 = sourceGenome;
+        world2.AddGenome(in g2);
+        var offspring2 = world2.GenerateOffspringGenome(1);
+
+        AssertSequenceEqual(offspring1.SpeciesGenome, offspring2.SpeciesGenome, "Species genome mutations should be identical for the same seed");
+        AssertSequenceEqual(offspring1.ModuleGenome, offspring2.ModuleGenome, "Module genome mutations should be identical for the same seed");
+        AssertSequenceEqual(offspring1.InstructionGenome, offspring2.InstructionGenome, "Instruction genome mutations should be identical for the same seed");
     }
 
     private static void AssertEqual<T>(T expected, T actual, string message)

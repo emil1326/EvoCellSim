@@ -77,8 +77,21 @@ namespace Assets.EvoCellSim.Core
             Genomes.SetById(genome.Id, genome);
         }
 
+        public int CountActiveModulesForCell(int cellId)
+        {
+            var count = 0;
+            foreach (var module in Modules.Records)
+            {
+                if (module.OwnerCellId == cellId && module.Active)
+                    count++;
+            }
+            return count;
+        }
+
         public int AddModule(in ModuleRecord module)
         {
+            if (CountActiveModulesForCell(module.OwnerCellId) >= Settings.MaxModulesPerCell)
+                return -1;
             return Modules.Add(module);
         }
 
@@ -145,6 +158,101 @@ namespace Assets.EvoCellSim.Core
             return true;
         }
 
+        public GenomeRecord GenerateOffspringGenome(int parentGenomeId)
+        {
+            if (!TryGetGenome(parentGenomeId, out var parentGenome))
+            {
+                return new GenomeRecord();
+            }
+
+            var offspringGenome = new GenomeRecord
+            {
+                Id = Genomes.Count + 1,
+                ParentId = parentGenomeId,
+                SpeciesGenome = MutateGenomeArray(parentGenome.SpeciesGenome),
+                ModuleGenome = MutateGenomeArray(parentGenome.ModuleGenome),
+                InstructionGenome = MutateGenomeArray(parentGenome.InstructionGenome)
+            };
+
+            return offspringGenome;
+        }
+
+        private byte[] MutateGenomeArray(byte[] parentArray)
+        {
+            if (parentArray == null || parentArray.Length == 0)
+            {
+                return parentArray ?? Array.Empty<byte>();
+            }
+
+            var mutatedArray = new byte[parentArray.Length];
+            System.Array.Copy(parentArray, mutatedArray, parentArray.Length);
+
+            for (var i = 0; i < mutatedArray.Length; i++)
+            {
+                if (Rng.NextFloat01() < Settings.MutationRate)
+                {
+                    var bitFlip = Rng.NextInt(8);
+                    mutatedArray[i] = (byte)(mutatedArray[i] ^ (1 << bitFlip));
+                }
+            }
+
+            return mutatedArray;
+        }
+
+        public int? TryCreateOffspring(int parentCellId, int parentGenomeId)
+        {
+            if (!TryGetCell(parentCellId, out var parentCell))
+            {
+                return null;
+            }
+
+            if (parentCell.Energy < Settings.ReproductionEnergyCost)
+            {
+                return null;
+            }
+
+            var liveCellCount = 0;
+            foreach (var c in Cells.Records)
+            {
+                if (c.Alive) liveCellCount++;
+            }
+            if (liveCellCount >= Settings.MaxCellCount)
+            {
+                return null;
+            }
+
+            var offspringGenome = GenerateOffspringGenome(parentGenomeId);
+                AddGenome(in offspringGenome);
+
+            var offspringCell = new CellRecord
+            {
+                Id = Cells.Count + 1,
+                Alive = true,
+                    GenomeId = offspringGenome.Id,
+                ClusterId = parentCell.ClusterId,
+                Energy = Settings.MaxEnergy / 2,
+                Damage = 0,
+                Pressure = 0,
+                MaxEnergy = Settings.MaxEnergy,
+                MaintenanceDebt = 0,
+                NeighborCount = 0,
+                BondDepth = 0,
+                ClusterPosition = 0,
+                LocalSignal = 0,
+                ReceivedSignal = 0,
+                ReprodCooldown = 0
+            };
+
+            var offspringId = AddCell(in offspringCell);
+
+            var updatedParent = parentCell;
+            updatedParent.Energy -= Settings.ReproductionEnergyCost;
+            updatedParent.ReprodCooldown = Settings.ReproductionCooldown;
+            UpdateCell(in updatedParent);
+
+            return offspringId;
+        }
+
         public void PassiveUpkeep()
         {
             for (var i = 0; i < Cells.Count; i++)
@@ -162,6 +270,11 @@ namespace Assets.EvoCellSim.Core
                 {
                     updated.Energy = 0;
                     updated.MaintenanceDebt += 2;
+                }
+
+                if (updated.ReprodCooldown > 0)
+                {
+                    updated.ReprodCooldown--;
                 }
 
                 UpdateCell(in updated);

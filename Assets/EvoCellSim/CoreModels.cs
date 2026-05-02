@@ -21,6 +21,7 @@ namespace Assets.EvoCellSim.Core
         public int ClusterPosition { get; set; }
         public float LocalSignal { get; set; }
         public float ReceivedSignal { get; set; }
+        public int ReprodCooldown { get; set; }
     }
 
     public struct GenomeRecord : IIdentifiable
@@ -74,7 +75,8 @@ namespace Assets.EvoCellSim.Core
         Move = 1,
         Mutation = 2,
         Wait = 3,
-        Repair = 4
+        Repair = 4,
+        Reproduction = 5
     }
 
     public struct IntentRecord : IIdentifiable

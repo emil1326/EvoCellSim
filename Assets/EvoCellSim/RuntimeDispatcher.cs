@@ -212,6 +212,20 @@ namespace Assets.EvoCellSim.Core
                             resolvedCount++;
                         }
                         break;
+                    case IntentKind.Reproduction:
+                        if (world.TryGetCell(intent.SourceCellId, out var reproCell) && reproCell.Energy >= world.Settings.ReproductionEnergyCost && reproCell.ReprodCooldown == 0)
+                        {
+                            var result = world.TryCreateOffspring(intent.SourceCellId, reproCell.GenomeId);
+                            if (result.HasValue)
+                            {
+                                resolvedCount++;
+                            }
+                        }
+                        else
+                        {
+                            resolvedCount++;
+                        }
+                        break;
                     default:
                         resolvedCount++;
                         break;

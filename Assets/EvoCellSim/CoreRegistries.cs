@@ -34,17 +34,22 @@ namespace Assets.EvoCellSim.Core
             Tokens.Register(new TokenPattern(7, TokenType.Condition, new byte[] { 0x40 }));
             Tokens.Register(new TokenPattern(8, TokenType.Opcode, new byte[] { 0x12 }));
             Tokens.Register(new TokenPattern(9, TokenType.Condition, new byte[] { 0x41 }));
+            Tokens.Register(new TokenPattern(10, TokenType.Opcode, new byte[] { 0x13 }));
 
             Opcodes.Register(new OpcodeDefinition(1, "Move", requiredOperands: 1, optionalOperands: 0, allowModifiers: false, hasFailureEffect: true));
             Opcodes.Register(new OpcodeDefinition(2, "Wait", requiredOperands: 0, optionalOperands: 0, allowModifiers: false, hasFailureEffect: false));
+            Opcodes.Register(new OpcodeDefinition(10, "Reproduce", requiredOperands: 0, optionalOperands: 0, allowModifiers: false, hasFailureEffect: true));
 
             Modules.Register(new ModuleDefinition(1, "Movement", new HashSet<int> { 1 }));
             Modules.Register(new ModuleDefinition(2, "Mutation", new HashSet<int> { 8 }));
             Modules.Register(new ModuleDefinition(3, "Repair", new HashSet<int>()));
+            Modules.Register(new ModuleDefinition(4, "Reproduction", new HashSet<int> { 10 }));
             Effects.Register(1, MoveEffect);
             Effects.Register(2, WaitEffect);
+            Effects.Register(10, ReproduceEffect);
             Effects.Register(8, MutateEffect);
             FailureEffects.Register(1, MoveFailureEffect);
+            FailureEffects.Register(10, ReproduceFailureEffect);
             Mutations.Register(new MutationOperator(1, "SimplePointMutation", MutateHook));
             TargetValidators.Register(1, MoveTargetValidator);
             Conditions.Register(new ConditionDefinition(7, "HasTarget"), HasTargetConditionEvaluator);
@@ -142,6 +147,30 @@ namespace Assets.EvoCellSim.Core
         private static EffectResult MutateEffect(WorldState world, int sourceCellId, DecodedInstruction instruction)
         {
             return new EffectResult(true, intent: null);
+        }
+
+        private static EffectResult ReproduceEffect(WorldState world, int sourceCellId, DecodedInstruction instruction)
+        {
+            var intent = new IntentRecord
+            {
+                Id = world.Intents.Count + 1,
+                SourceCellId = sourceCellId,
+                TargetCellId = sourceCellId,
+                Kind = IntentKind.Reproduction
+            };
+
+            return new EffectResult(true, intent: intent);
+        }
+
+        private static IntentRecord? ReproduceFailureEffect(WorldState world, int sourceCellId, DecodedInstruction instruction, string failureReason)
+        {
+            return new IntentRecord
+            {
+                Id = world.Intents.Count + 1,
+                SourceCellId = sourceCellId,
+                TargetCellId = sourceCellId,
+                Kind = IntentKind.Wait
+            };
         }
 
         private static MutationResult MutateHook(WorldState world, int sourceCellId, DecodedInstruction instruction)

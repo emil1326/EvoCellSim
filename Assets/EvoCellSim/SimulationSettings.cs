@@ -14,6 +14,11 @@ namespace Assets.EvoCellSim.Core
         public float BondDecayPerTick { get; } = 0.1f;
         public float BondBreakThreshold { get; } = 0.05f;
         public int BondTransferAmount { get; } = 1;
+        public int ReproductionEnergyCost { get; } = 8;
+        public int ReproductionCooldown { get; } = 10;
+        public float MutationRate { get; } = 0.1f;
+        public int MaxCellCount { get; init; } = int.MaxValue;
+        public int MaxModulesPerCell { get; init; } = 8;
 
         public SimulationSettings(ulong seed, int ticksPerSecond = 60)
         {
