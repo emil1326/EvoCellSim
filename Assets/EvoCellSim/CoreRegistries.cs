@@ -340,9 +340,9 @@ namespace Assets.EvoCellSim.Core
     {
         public int ModuleTypeId { get; }
         public string Name { get; }
-        public IReadOnlySet<int> AllowedOpcodes { get; }
+        public HashSet<int> AllowedOpcodes { get; }
 
-        public ModuleDefinition(int moduleTypeId, string name, IReadOnlySet<int> allowedOpcodes)
+        public ModuleDefinition(int moduleTypeId, string name, HashSet<int> allowedOpcodes)
         {
             ModuleTypeId = moduleTypeId;
             Name = name;

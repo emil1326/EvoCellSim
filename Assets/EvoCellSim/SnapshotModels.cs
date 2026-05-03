@@ -4,16 +4,10 @@ namespace Assets.EvoCellSim.Core
 {
     public readonly struct SnapshotRegion
     {
-        public static readonly SnapshotRegion All = new SnapshotRegion();
+        public static readonly SnapshotRegion All = new SnapshotRegion { MaxCells = int.MaxValue };
 
         public int? ClusterId { get; init; }
         public int MaxCells { get; init; }
-
-        public SnapshotRegion()
-        {
-            ClusterId = null;
-            MaxCells = int.MaxValue;
-        }
 
         public SnapshotRegion(int clusterId, int maxCells = int.MaxValue)
         {

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace Assets.EvoCellSim.Core
@@ -303,7 +304,7 @@ namespace Assets.EvoCellSim.Core
                 var overpressure = updated.Pressure - Settings.PressurePerCell;
                 if (overpressure > 0)
                 {
-                    updated.Damage += (int)MathF.Ceiling(overpressure) * Settings.DamagePerOverpressure;
+                    updated.Damage += (int)Math.Ceiling(overpressure) * Settings.DamagePerOverpressure;
                 }
 
                 if (updated.MaxEnergy <= 0)
@@ -864,7 +865,7 @@ namespace Assets.EvoCellSim.Core
         public GenomeDecodeResult DecodeInstructionGenome(int genomeId)
         {
             var genome = GetGenomeById(genomeId);
-            return GenomeDecoder.DecodeInstructionGenome(genome.InstructionGenome.AsSpan(), Registries.Tokens, Registries.Opcodes);
+            return GenomeDecoder.DecodeInstructionGenome(new ReadOnlySpan<byte>(genome.InstructionGenome), Registries.Tokens, Registries.Opcodes);
         }
 
         public GenomeRecord GetGenomeById(int id)
