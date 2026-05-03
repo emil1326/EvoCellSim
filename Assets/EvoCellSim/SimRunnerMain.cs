@@ -20,7 +20,17 @@ namespace Assets.EvoCellSim
         {
             EnsureCamera();
 
-            var settings = new SimulationSettings(worldSeed) { MaxCellCount = 200 };
+            var settings = new SimulationSettings(worldSeed)
+            {
+                MaxCellCount = 200,
+                MaxEnergy = 50,
+                PassiveEnergyGain = 2,
+                PassiveUpkeepCost = 1,
+                DeathDamageThreshold = 100,
+                BondDecayPerTick = 0.003f,
+                ReproductionCooldown = 20,
+                MutationRate = 0.05f,
+            };
             SimRunner = new SimulationRunner(settings);
             SpawnInitialCells();
             RefreshStats();
@@ -71,7 +81,8 @@ namespace Assets.EvoCellSim
                 ParentId = 0,
                 SpeciesGenome = speciesTag,
                 ModuleGenome = new byte[] { 1, 4 },
-                InstructionGenome = new byte[] { 10, 2, 1 }
+                // 0x13 = Reproduce opcode token, 0xFF = control/terminate
+                InstructionGenome = new byte[] { 0x13, 0xFF }
             };
             world.AddGenome(in genome);
 
@@ -104,6 +115,8 @@ namespace Assets.EvoCellSim
                 world.AddModule(in movMod);
                 var repMod = new ModuleRecord { Id = world.Modules.Count + 1, OwnerCellId = cellId, ModuleTypeId = 4, Active = true };
                 world.AddModule(in repMod);
+                var repairMod = new ModuleRecord { Id = world.Modules.Count + 1, OwnerCellId = cellId, ModuleTypeId = 3, Active = true };
+                world.AddModule(in repairMod);
 
                 if (i > 0)
                     world.TryCreateBond(firstCellId, cellId, 1f, out _);

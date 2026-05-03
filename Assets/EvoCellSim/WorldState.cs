@@ -249,6 +249,25 @@ namespace Assets.EvoCellSim.Core
 
             var offspringId = AddCell(in offspringCell);
 
+            TryCreateBond(parentCellId, offspringCell.Id, 1f, out _);
+
+            var parentModules = new System.Collections.Generic.List<ModuleRecord>();
+            foreach (var m in Modules.Records)
+                if (m.OwnerCellId == parentCellId && m.Active)
+                    parentModules.Add(m);
+
+            foreach (var pm in parentModules)
+            {
+                var childModule = new ModuleRecord
+                {
+                    Id = Modules.Count + 1,
+                    OwnerCellId = offspringCell.Id,
+                    ModuleTypeId = pm.ModuleTypeId,
+                    Active = true
+                };
+                AddModule(in childModule);
+            }
+
             var updatedParent = parentCell;
             updatedParent.Energy -= Settings.ReproductionEnergyCost;
             updatedParent.ReprodCooldown = Settings.ReproductionCooldown;
@@ -268,6 +287,8 @@ namespace Assets.EvoCellSim.Core
                 }
 
                 var updated = cell;
+                updated.Energy += Settings.PassiveEnergyGain;
+                if (updated.Energy > updated.MaxEnergy) updated.Energy = updated.MaxEnergy;
                 updated.Energy -= Settings.PassiveUpkeepCost;
 
                 if (updated.Energy < 0)
@@ -307,7 +328,9 @@ namespace Assets.EvoCellSim.Core
                 var overpressure = updated.Pressure - Settings.PressurePerCell;
                 if (overpressure > 0)
                 {
-                    updated.Damage += (int)Math.Ceiling(overpressure) * Settings.DamagePerOverpressure;
+                    // Integer truncation intentional: fractional overpressure doesn't cause damage,
+                    // so small clusters (size ≤ 4 with default PressurePerCell=0.25) are safe.
+                    updated.Damage += (int)overpressure * Settings.DamagePerOverpressure;
                 }
 
                 if (updated.MaxEnergy <= 0)

@@ -34,11 +34,13 @@ namespace Assets.EvoCellSim
         private readonly HashSet<int> seenThisFrame = new HashSet<int>();
         private readonly List<int> toRemove = new List<int>();
 
-        private readonly MaterialPropertyBlock mpb = new MaterialPropertyBlock();
+        private MaterialPropertyBlock mpb;
         private Material lineMaterial;
 
         private void Awake()
         {
+            mpb = new MaterialPropertyBlock();
+
             var shader = Shader.Find("Hidden/Internal-Colored");
             if (shader == null) return;
             lineMaterial = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
@@ -185,9 +187,13 @@ namespace Assets.EvoCellSim
 
         private void HandleClick()
         {
+#if ENABLE_INPUT_SYSTEM
+            if (!UnityEngine.InputSystem.Mouse.current.leftButton.wasPressedThisFrame || Camera.main == null) return;
+            var ray = Camera.main.ScreenPointToRay(UnityEngine.InputSystem.Mouse.current.position.ReadValue());
+#else
             if (!Input.GetMouseButtonDown(0) || Camera.main == null) return;
-
             var ray = Camera.main.ScreenPointToRay(Input.mousePosition);
+#endif
             if (Physics.Raycast(ray, out var hit, 100f))
             {
                 var go = hit.collider.gameObject;

@@ -57,7 +57,151 @@ static class Program
             ? "[CoreTests] ALL TESTS PASSED"
             : $"[CoreTests] FAILURES: {failures}");
 
+        Console.WriteLine();
+        RunSimTrace(300);
+
         return failures == 0 ? 0 : 1;
+    }
+
+    // ── Simulation trace ─────────────────────────────────────────────────────
+
+    private static void RunSimTrace(int ticks)
+    {
+        Console.WriteLine($"=== SIMULATION TRACE ({ticks} ticks, seed 465124787894) ===");
+        Console.WriteLine("Settings: MaxCellCount=200, MaxEnergy=50, EnergyGain=2, Upkeep=1,");
+        Console.WriteLine("          DeathThreshold=100, BondDecay=0.003, ReprodCooldown=20, MutationRate=0.05");
+        Console.WriteLine();
+
+        var settings = new SimulationSettings(465124787894UL)
+        {
+            MaxCellCount = 200,
+            MaxEnergy = 50,
+            PassiveEnergyGain = 2,
+            PassiveUpkeepCost = 1,
+            DeathDamageThreshold = 100,
+            BondDecayPerTick = 0.003f,
+            ReproductionCooldown = 20,
+            MutationRate = 0.05f,
+        };
+
+        var runner = new SimulationRunner(settings);
+        TraceSpawnCluster(runner.World, 4, 1);
+        TraceSpawnCluster(runner.World, 4, 2);
+        TraceSpawnCluster(runner.World, 3, 3);
+
+        var prevCellIds = new HashSet<int>();
+        foreach (var c in runner.World.Cells.Records) if (c.Alive) prevCellIds.Add(c.Id);
+
+        int totalBirths = 0, totalDeaths = 0;
+
+        for (var tick = 1; tick <= ticks; tick++)
+        {
+            runner.Tick();
+
+            var nowAlive = new HashSet<int>();
+            var nowDead = new HashSet<int>();
+            var nowEnergy = new Dictionary<int, int>();
+            var nowDamage = new Dictionary<int, int>();
+
+            foreach (var c in runner.World.Cells.Records)
+            {
+                if (c.Alive)
+                {
+                    nowAlive.Add(c.Id);
+                    nowEnergy[c.Id] = c.Energy;
+                    nowDamage[c.Id] = c.Damage;
+                }
+                else if (prevCellIds.Contains(c.Id))
+                {
+                    nowDead.Add(c.Id);
+                }
+            }
+
+            var births = nowAlive.Count - prevCellIds.Count + nowDead.Count;
+            var deaths = nowDead.Count;
+            totalBirths += Math.Max(0, births);
+            totalDeaths += deaths;
+
+            var clusterCount = runner.World.Clusters.Count;
+            var bondCount = runner.World.Bonds.Count;
+            var alive = nowAlive.Count;
+
+            var energySum = 0;
+            foreach (var e in nowEnergy.Values) energySum += e;
+            var avgEnergy = alive > 0 ? energySum / alive : 0;
+
+            var damageSum = 0;
+            foreach (var d in nowDamage.Values) damageSum += d;
+            var avgDamage = alive > 0 ? damageSum / alive : 0;
+
+            var hasEvent = births > 0 || deaths > 0;
+            var printEvery = tick <= 20 || tick % 50 == 0 || hasEvent || alive == 0;
+
+            if (printEvery)
+            {
+                var line = $"Tick {tick,4}: alive={alive,4} clusters={clusterCount,4} bonds={bondCount,4} | avgE={avgEnergy,3} avgDmg={avgDamage,3}";
+                if (births > 0) line += $" | +{births} born";
+                if (deaths > 0)
+                {
+                    line += $" | -{deaths} died";
+                    foreach (var id in nowDead)
+                    {
+                        var lastCell = runner.World.Cells.GetById(id);
+                        line += $" [#{id} E={lastCell.Energy} D={lastCell.Damage}]";
+                    }
+                }
+                Console.WriteLine(line);
+            }
+
+            if (alive == 0)
+            {
+                Console.WriteLine("  >> ALL CELLS DEAD");
+                break;
+            }
+
+            prevCellIds = nowAlive;
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"=== TRACE END: total births={totalBirths} total deaths={totalDeaths} ===");
+    }
+
+    private static void TraceSpawnCluster(WorldState world, int cellCount, int genomeIndex)
+    {
+        var genomeId = world.Genomes.Count + 1;
+        var genome = new GenomeRecord
+        {
+            Id = genomeId,
+            ParentId = 0,
+            SpeciesGenome = new byte[] { (byte)genomeIndex },
+            ModuleGenome = new byte[] { 1, 4 },
+            InstructionGenome = new byte[] { 0x13, 0xFF }  // Reproduce + terminate
+        };
+        world.AddGenome(in genome);
+
+        var firstCellId = world.Cells.Count + 1;
+
+        for (var i = 0; i < cellCount; i++)
+        {
+            var cellId = world.Cells.Count + 1;
+            var cell = new CellRecord
+            {
+                Id = cellId, Alive = true, GenomeId = genomeId,
+                ClusterId = firstCellId,
+                Energy = world.Settings.MaxEnergy, MaxEnergy = world.Settings.MaxEnergy,
+                Damage = 0, Pressure = 0, MaintenanceDebt = 0,
+                NeighborCount = 0, BondDepth = 0, ClusterPosition = i,
+                LocalSignal = 0, ReceivedSignal = 0, ReprodCooldown = 0
+            };
+            world.AddCell(in cell);
+
+            world.AddModule(new ModuleRecord { Id = world.Modules.Count + 1, OwnerCellId = cellId, ModuleTypeId = 1, Active = true });
+            world.AddModule(new ModuleRecord { Id = world.Modules.Count + 1, OwnerCellId = cellId, ModuleTypeId = 4, Active = true });
+            world.AddModule(new ModuleRecord { Id = world.Modules.Count + 1, OwnerCellId = cellId, ModuleTypeId = 3, Active = true });
+
+            if (i > 0)
+                world.TryCreateBond(firstCellId, cellId, 1f, out _);
+        }
     }
 
     private static void RunTest(string name, Action test)

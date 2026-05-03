@@ -4,19 +4,20 @@ namespace Assets.EvoCellSim.Core
     {
         public ulong Seed { get; }
         public int TicksPerSecond { get; }
-        public int PassiveUpkeepCost { get; } = 1;
-        public int RepairEnergyCost { get; } = 2;
-        public float PressurePerCell { get; } = 0.25f;
-        public int DamagePerOverpressure { get; } = 1;
-        public int DeathDamageThreshold { get; } = 10;
-        public int RepairPower { get; } = 3;
-        public int MaxEnergy { get; } = 20;
-        public float BondDecayPerTick { get; } = 0.1f;
-        public float BondBreakThreshold { get; } = 0.05f;
-        public int BondTransferAmount { get; } = 1;
-        public int ReproductionEnergyCost { get; } = 8;
-        public int ReproductionCooldown { get; } = 10;
-        public float MutationRate { get; } = 0.1f;
+        public int PassiveUpkeepCost { get; init; } = 1;
+        public int PassiveEnergyGain { get; init; } = 0;
+        public int RepairEnergyCost { get; init; } = 2;
+        public float PressurePerCell { get; init; } = 0.25f;
+        public int DamagePerOverpressure { get; init; } = 1;
+        public int DeathDamageThreshold { get; init; } = 10;
+        public int RepairPower { get; init; } = 3;
+        public int MaxEnergy { get; init; } = 20;
+        public float BondDecayPerTick { get; init; } = 0.1f;
+        public float BondBreakThreshold { get; init; } = 0.05f;
+        public int BondTransferAmount { get; init; } = 1;
+        public int ReproductionEnergyCost { get; init; } = 8;
+        public int ReproductionCooldown { get; init; } = 10;
+        public float MutationRate { get; init; } = 0.1f;
         public int MaxCellCount { get; init; } = int.MaxValue;
         public int MaxModulesPerCell { get; init; } = 8;
 
