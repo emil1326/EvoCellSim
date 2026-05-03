@@ -1,41 +1,128 @@
-﻿using Assets.EvoCellSim.Core;
+using Assets.EvoCellSim.Core;
 using UnityEngine;
 
 namespace Assets.EvoCellSim
 {
-    public class SimRunnerMain : MonoBehaviour
+    public sealed class SimRunnerMain : MonoBehaviour
     {
-        public SimulationRunner simRunner;
-        public int maxCells = 100;
-        public int maxComponents = 1000;
-        public ulong worldSeed = 465124787894UL;
-        // Use this for initialization
-        void Start()
+        [SerializeField] private ulong worldSeed = 465124787894UL;
+        [SerializeField] private int targetTicksPerSecond = 20;
+
+        public SimulationRunner SimRunner { get; private set; }
+        public bool IsPaused { get; set; }
+        public float SimSpeed { get; set; } = 1f;
+        public int AliveCellCount { get; private set; }
+        public int ClusterCount { get; private set; }
+
+        private float tickAccumulator;
+
+        private void Start()
         {
-            var settings = new SimulationSettings(worldSeed);
-            simRunner = new SimulationRunner(settings);
+            EnsureCamera();
+
+            var settings = new SimulationSettings(worldSeed) { MaxCellCount = 200 };
+            SimRunner = new SimulationRunner(settings);
+            SpawnInitialCells();
+            RefreshStats();
         }
 
-        // FixedUpdate is used so the simulation advances in a stable tick cadence.
-        void FixedUpdate()
+        private void Update()
         {
-            simRunner?.Tick();
-        }
+            if (IsPaused || SimRunner == null) return;
 
-        private void OnDestroy()
-        {
-        }
+            tickAccumulator += Time.deltaTime * Mathf.Max(0.1f, SimSpeed) * targetTicksPerSecond;
 
-        private void OnGUI()
-        {
-            if (simRunner == null)
+            var maxPerFrame = Mathf.Max(1, targetTicksPerSecond * 4);
+            var ticked = 0;
+            while (tickAccumulator >= 1f && ticked < maxPerFrame)
             {
-                return;
+                SimRunner.Tick();
+                ticked++;
+                tickAccumulator -= 1f;
             }
 
-            GUI.Label(new Rect(10, 10, 400, 20), $"Seed: {simRunner.World.Seed}");
-            GUI.Label(new Rect(10, 30, 400, 20), $"Tick: {simRunner.World.Tick}");
-            GUI.Label(new Rect(10, 50, 400, 20), $"Last phase count: {simRunner.LastTickTrace.Count}");
+            if (ticked > 0) RefreshStats();
+        }
+
+        private void RefreshStats()
+        {
+            var alive = 0;
+            foreach (var cell in SimRunner.World.Cells.Records)
+                if (cell.Alive) alive++;
+            AliveCellCount = alive;
+            ClusterCount = SimRunner.World.Clusters.Count;
+        }
+
+        private void SpawnInitialCells()
+        {
+            SpawnCluster(4, new byte[] { 1, 0, 0 });
+            SpawnCluster(4, new byte[] { 0, 1, 0 });
+            SpawnCluster(3, new byte[] { 0, 0, 1 });
+        }
+
+        private void SpawnCluster(int cellCount, byte[] speciesTag)
+        {
+            var world = SimRunner.World;
+
+            var genomeId = world.Genomes.Count + 1;
+            var genome = new GenomeRecord
+            {
+                Id = genomeId,
+                ParentId = 0,
+                SpeciesGenome = speciesTag,
+                ModuleGenome = new byte[] { 1, 4 },
+                InstructionGenome = new byte[] { 10, 2, 1 }
+            };
+            world.AddGenome(in genome);
+
+            var firstCellId = world.Cells.Count + 1;
+
+            for (var i = 0; i < cellCount; i++)
+            {
+                var cellId = world.Cells.Count + 1;
+                var cell = new CellRecord
+                {
+                    Id = cellId,
+                    Alive = true,
+                    GenomeId = genomeId,
+                    ClusterId = firstCellId,
+                    Energy = world.Settings.MaxEnergy,
+                    MaxEnergy = world.Settings.MaxEnergy,
+                    Damage = 0,
+                    Pressure = 0,
+                    MaintenanceDebt = 0,
+                    NeighborCount = 0,
+                    BondDepth = 0,
+                    ClusterPosition = i,
+                    LocalSignal = 0,
+                    ReceivedSignal = 0,
+                    ReprodCooldown = 0
+                };
+                world.AddCell(in cell);
+
+                var movMod = new ModuleRecord { Id = world.Modules.Count + 1, OwnerCellId = cellId, ModuleTypeId = 1, Active = true };
+                world.AddModule(in movMod);
+                var repMod = new ModuleRecord { Id = world.Modules.Count + 1, OwnerCellId = cellId, ModuleTypeId = 4, Active = true };
+                world.AddModule(in repMod);
+
+                if (i > 0)
+                    world.TryCreateBond(firstCellId, cellId, 1f, out _);
+            }
+        }
+
+        // Creates an orthographic camera if none exists so the scene is self-contained.
+        private static void EnsureCamera()
+        {
+            if (Camera.main != null) return;
+
+            var go = new GameObject("Main Camera");
+            go.tag = "MainCamera";
+            var cam = go.AddComponent<Camera>();
+            cam.orthographic = true;
+            cam.orthographicSize = 14f;
+            cam.transform.position = new Vector3(0f, 0f, -20f);
+            cam.backgroundColor = new Color(0.05f, 0.05f, 0.1f);
+            cam.clearFlags = CameraClearFlags.SolidColor;
         }
     }
 }

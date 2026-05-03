@@ -6,11 +6,13 @@ namespace Assets.EvoCellSim.Core
     public sealed class WorldState
     {
         private readonly List<CellRecord> lastSnapshot = new List<CellRecord>();
+        private readonly List<BondRecord> lastBondSnapshot = new List<BondRecord>();
 
         public SimulationSettings Settings { get; }
         public ulong Seed => Settings.Seed;
         public long Tick { get; private set; }
-        public DeterministicRng Rng { get; private set; }
+        private DeterministicRng rng;
+        public DeterministicRng Rng => rng;
         public CoreRegistries Registries { get; }
         public CellStore Cells { get; }
         public GenomeStore Genomes { get; }
@@ -21,11 +23,12 @@ namespace Assets.EvoCellSim.Core
         public SignalStore Signals { get; }
         public IntentQueue Intents { get; }
         public IReadOnlyList<CellRecord> LastSnapshot => lastSnapshot;
+        public IReadOnlyList<BondRecord> LastBondSnapshot => lastBondSnapshot;
 
         public WorldState(SimulationSettings settings)
         {
             Settings = settings;
-            Rng = new DeterministicRng(settings.Seed);
+            rng = new DeterministicRng(settings.Seed);
             Registries = new CoreRegistries();
             Cells = new CellStore();
             Genomes = new GenomeStore();
@@ -190,9 +193,9 @@ namespace Assets.EvoCellSim.Core
 
             for (var i = 0; i < mutatedArray.Length; i++)
             {
-                if (Rng.NextFloat01() < Settings.MutationRate)
+                if (rng.NextFloat01() < Settings.MutationRate)
                 {
-                    var bitFlip = Rng.NextInt(8);
+                    var bitFlip = rng.NextInt(8);
                     mutatedArray[i] = (byte)(mutatedArray[i] ^ (1 << bitFlip));
                 }
             }
@@ -851,15 +854,16 @@ namespace Assets.EvoCellSim.Core
         public void BuildSnapshot()
         {
             lastSnapshot.Clear();
-
             for (var i = 0; i < Cells.Count; i++)
             {
                 var cell = Cells.Get(i);
                 if (cell.Alive)
-                {
                     lastSnapshot.Add(cell);
-                }
             }
+
+            lastBondSnapshot.Clear();
+            for (var i = 0; i < Bonds.Count; i++)
+                lastBondSnapshot.Add(Bonds.Get(i));
         }
 
         public GenomeDecodeResult DecodeInstructionGenome(int genomeId)

@@ -28,7 +28,7 @@ namespace Assets.EvoCellSim.Core
                 return result;
             }
 
-            var decoded = GenomeDecoder.DecodeInstructionGenome(genome.InstructionGenome.AsSpan(), world.Registries.Tokens, world.Registries.Opcodes);
+            var decoded = GenomeDecoder.DecodeInstructionGenome(new ReadOnlySpan<byte>(genome.InstructionGenome), world.Registries.Tokens, world.Registries.Opcodes);
 
             foreach (var instruction in decoded.Instructions)
             {
